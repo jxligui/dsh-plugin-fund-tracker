@@ -177,6 +177,8 @@ window.__ModuleLoader__.load({
         toWatch: '加入我的自选',
         toHold: '加入持仓',
         inWatch: '已在自选',
+        prevNav: '昨日净值',
+        usePrevNav: '按昨日净值',
         watchEmpty: '暂无自选基金。在行情页或下方搜索点「＋ 加自选」即可关注。',
         prevClose: '昨收',
         chg: '涨跌额',
@@ -304,6 +306,8 @@ window.__ModuleLoader__.load({
         toWatch: 'Add to watchlist',
         toHold: 'Add to holdings',
         inWatch: 'In watchlist',
+        prevNav: 'Prev NAV',
+        usePrevNav: 'Using prev NAV',
         watchEmpty: 'No watchlist items yet. Add from the market tab or search below.',
         prevClose: 'Prev close',
         chg: 'Change',
@@ -400,6 +404,15 @@ window.__ModuleLoader__.load({
       if (v == null || !isFinite(v)) return '—';
       const abs = Math.abs(v).toLocaleString('zh-CN', { minimumFractionDigits: digits, maximumFractionDigits: digits });
       return `${v > 0 ? '+' : v < 0 ? '−' : ''}${abs}`;
+    }
+    // fundgz `jzrq` is the date of the latest published NAV; if it is not today,
+    // today's NAV is still unpublished and the previous NAV is used for holdings.
+    function isTodayNav(dateStr) {
+      if (!dateStr) return true;
+      const p = String(dateStr).trim().split('-').map(Number);
+      if (p.length < 3 || !isFinite(p[0])) return true;
+      const d = new Date();
+      return p[0] === d.getFullYear() && p[1] === d.getMonth() + 1 && p[2] === d.getDate();
     }
 
     const css = `
@@ -509,7 +522,7 @@ window.__ModuleLoader__.load({
 .ft-more{flex-shrink:0;display:inline-flex;align-items:center;gap:3px;min-height:30px;padding:0 10px;border:1px solid var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-brand-primary);border-radius:8px;cursor:pointer;font:inherit;font-size:11px;font-weight:600;white-space:nowrap;}
 .ft-more:hover{background:var(--dsw-alias-bg-layer-1);}
 .ft-more-on{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-bg-base);}
-.ft-card-meta{display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) auto;gap:4px 8px;margin-top:6px;align-items:end;}
+.ft-card-meta{display:grid;grid-template-columns:repeat(5,minmax(0,1fr)) auto;gap:4px 8px;margin-top:6px;align-items:end;}
 .ft-meta-cell{display:flex;flex-direction:column;gap:1px;min-width:0;}
 .ft-meta-label{color:var(--dsw-alias-label-secondary);font-size:11px;}
 .ft-meta-value{color:var(--dsw-alias-label-primary);}
@@ -540,7 +553,7 @@ window.__ModuleLoader__.load({
 .ft-num{font-variant-numeric:tabular-nums;}
 .ft-suggest-item{width:100%;background:none;border:none;font:inherit;color:inherit;text-align:left;}
 .ft-root :focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px;border-radius:4px;}
-@media (max-width:720px){ .ft-card-meta{grid-template-columns:repeat(2,1fr)} }
+@media (max-width:720px){ .ft-card-meta{grid-template-columns:repeat(3,1fr)} }
 `;
 
     function useQuotes(codes, refreshKey) {
@@ -1193,7 +1206,7 @@ window.__ModuleLoader__.load({
         if (amt === '') return null;
         const n = Number(amt);
         if (!isFinite(n) || n <= 0) return t('amountRule');
-        const nav = r.nav;
+        const nav = r.amountNav;
         return nav != null ? `${n.toLocaleString('zh-CN')} ÷ ${nav} ≈ ${(n / nav).toFixed(2)} ${t('sharesShort')}`
           : t('pendingHint');
       };
@@ -1236,7 +1249,7 @@ window.__ModuleLoader__.load({
         const cur = r.hold.shares == null ? 0 : Number(r.hold.shares) || 0;
         const direct = String(form.shares == null ? '' : form.shares).trim();
         const amt = String(form.amount || '').trim();
-        const fromAmount = amt !== '' && r.nav != null ? Number((Number(amt) / r.nav).toFixed(2)) : NaN;
+        const fromAmount = amt !== '' && r.amountNav != null ? Number((Number(amt) / r.amountNav).toFixed(2)) : NaN;
         const qty = direct !== '' ? Number(direct) : fromAmount;
         const qtyOk = isFinite(qty) && qty > 0;
         const after = qtyOk ? Math.max(0, cur + (trade.mode === 'add' ? qty : -qty)) : null;
@@ -1376,6 +1389,7 @@ window.__ModuleLoader__.load({
                 h(SectorCell, { t, name: r.hold.name || code, marketQuotes }),
                 r.pending != null && h('span', { className: 'ft-flag ft-flag-pending' }, t('pendingCalc')),
                 r.hold.watch && h('span', { className: 'ft-flag' }, t('tabWatch')),
+                r.usingYesterday && h('span', { className: 'ft-flag ft-flag-pending' }, t('usePrevNav')),
               ),
             ),
             h('div', { className: 'ft-card-fig' },
@@ -1391,6 +1405,7 @@ window.__ModuleLoader__.load({
           ),
           h('div', { className: 'ft-card-meta' },
             metaCell(t('nav'), money(r.nav)),
+            metaCell(t('prevNav'), money(r.prevNav)),
             metaCell(t('costShort'), mask(money(r.hold.cost))),
             metaCell(t('sharesShort'), r.pending != null ? t('pendingCalc') : mask(money(r.hold.shares))),
             metaCell(t('totalPct'), r.pending != null ? '—' : loggedIn ? pct(r.totalPct) : '***', loggedIn ? signColor(r.totalProfit) : null),
@@ -1600,16 +1615,24 @@ window.__ModuleLoader__.load({
 
       const rows = useMemo(() => holdings.map(hold => {
         const q = allQuotes[hold.code];
-        // Fundgz quotes carry `nav`; ETF quotes only carry `price`.
+        // ETF quotes carry `price` instead of `nav`; `prevNav` is yesterday's NAV.
         const nav = q ? (q.nav != null ? q.nav : (q.price != null ? q.price : null)) : null;
-        const changePct = q && q.changePct != null ? q.changePct : null;
-        const amount = nav != null && hold.shares != null ? hold.shares * nav : null;
+        const hasTodayNav = isTodayNav(q && q.navDate);
+        const prevNav = q
+          ? (q.prevNav != null ? q.prevNav
+            : (q.price != null && q.changePct != null && q.changePct > -100 ? q.price / (1 + q.changePct / 100) : null))
+          : null;
+        // 今日净值未公布时用昨日净值计算持仓金额与汇总。
+        const usingYesterday = !hasTodayNav && prevNav != null && prevNav > 0;
+        const amountNav = usingYesterday ? prevNav : nav;
+        const changePct = q && q.changePct != null && !usingYesterday ? q.changePct : null;
+        const amount = amountNav != null && hold.shares != null ? hold.shares * amountNav : null;
         const todayProfit = amount != null && changePct != null ? amount * changePct / (100 + changePct) : null;
-        const totalProfit = nav != null && hold.cost != null && hold.shares != null ? (nav - hold.cost) * hold.shares : null;
-        const totalPct = nav != null && hold.cost ? (nav / hold.cost - 1) * 100 : null;
+        const totalProfit = amountNav != null && hold.cost != null && hold.shares != null ? (amountNav - hold.cost) * hold.shares : null;
+        const totalPct = amountNav != null && hold.cost ? (amountNav / hold.cost - 1) * 100 : null;
         // Amount entered before any NAV was known: shares are filled in later.
         const pending = hold.pendingAmount != null && hold.pendingAmount > 0 ? hold.pendingAmount : null;
-        return { hold, q, nav, changePct, amount, todayProfit, totalProfit, totalPct, pending };
+        return { hold, q, nav, prevNav, amountNav, usingYesterday, changePct, amount, todayProfit, totalProfit, totalPct, pending };
       }), [holdings, allQuotes]);
 
       const totals = useMemo(() => {
@@ -1665,11 +1688,14 @@ window.__ModuleLoader__.load({
         return data;
       };
 
-      // Latest NAV for a code, from fundgz (`nav`) or the ETF feed (`price`).
+      // Latest usable NAV for a code: yesterday's when today's is still unpublished.
       const navOf = code => {
         const q = allQuotes[code];
-        const nav = q ? (q.nav != null ? q.nav : (q.price != null ? q.price : null)) : null;
-        return nav != null && nav > 0 ? nav : null;
+        if (!q) return null;
+        const prev = q.prevNav != null ? q.prevNav
+          : (q.price != null && q.changePct != null && q.changePct > -100 ? q.price / (1 + q.changePct / 100) : null);
+        if (!isTodayNav(q.navDate) && prev != null && prev > 0) return prev;
+        return q.nav != null ? q.nav : (q.price != null ? q.price : null);
       };
 
       const saveForm = async () => {

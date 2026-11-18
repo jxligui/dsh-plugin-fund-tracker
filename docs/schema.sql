@@ -7,14 +7,17 @@
 
 -- =========================================================
 -- 1. 个人持仓 / 自选表
---    按 DSH 登录账号（account）隔离；shares 与 cost 同时为 NULL 表示纯自选。
+--    按 DSH 登录账号（account）隔离；watch = 1 表示在「我的自选」里。
+--    自选与持仓互相独立：一只基金可以同时在自选和持仓里（watch=1 且 shares 非 NULL）。
 -- =========================================================
 CREATE TABLE IF NOT EXISTS holdings (
   account    TEXT NOT NULL,             -- DSH 账号标识（未登录不可读写）
   code       TEXT NOT NULL,             -- 6 位基金/指数代码
   name       TEXT,                      -- 基金名称（冗余，展示用）
-  shares     REAL,                      -- 持有份额；NULL = 自选
+  shares     REAL,                      -- 持有份额；NULL = 未记份额
   cost       REAL,                      -- 持仓成本价（单位净值）；NULL = 未填
+  watch      INTEGER NOT NULL DEFAULT 0,-- 1 = 在我的自选；与是否有份额无关
+  pending_amount REAL,                     -- 待确认金额：净值取不到时先存金额，取到后折算份额并清空
   updated_at INTEGER NOT NULL,          -- 最后更新时间戳（毫秒）
   PRIMARY KEY (account, code)
 );

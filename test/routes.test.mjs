@@ -69,6 +69,50 @@ test('save / list / delete holding round-trip', async () => {
   assert.equal(afterDelete.items.length, 0);
 });
 
+test('watch flag is independent of position shares', async () => {
+  await api('action=save', { code: '110022', name: '测试持仓', shares: '500', cost: '2' });
+  // 加入我的自选 keeps the position but marks it watched.
+  const watched = await (await api('action=watch', { code: '110022', watch: true })).json();
+  assert.equal(watched.result.watch, true);
+  const row = watched.items.find(x => x.code === '110022');
+  assert.equal(row.watch, true);
+  assert.equal(row.shares, 500);
+  // Editing shares/cost without a `watch` field must not clear the flag.
+  const edited = await (await api('action=save', { code: '110022', shares: '600', cost: '2.1' })).json();
+  const editedRow = edited.items.find(x => x.code === '110022');
+  assert.equal(editedRow.watch, true);
+  assert.equal(editedRow.shares, 600);
+  // 加入持仓 on a watch-only fund keeps it in the watchlist too.
+  await api('action=save', { code: '161725', name: '测试自选', shares: '', cost: '', watch: true });
+  const promoted = await (await api('action=save', { code: '161725', name: '测试自选', shares: '800', cost: '1.05' })).json();
+  const promotedRow = promoted.items.find(x => x.code === '161725');
+  assert.equal(promotedRow.watch, true);
+  assert.equal(promotedRow.shares, 800);
+  // Unwatching keeps the position row.
+  const unwatched = await (await api('action=watch', { code: '161725', watch: false })).json();
+  assert.equal(unwatched.items.find(x => x.code === '161725').watch, false);
+  assert.equal(unwatched.items.find(x => x.code === '161725').shares, 800);
+  await api('action=delete', { code: '110022' });
+  await api('action=delete', { code: '161725' });
+});
+
+test('amount saved before NAV stays pending until settled', async () => {
+  const saved = await (await api('action=save', { code: '000021', name: '待确认基金', shares: '', cost: '', pendingAmount: '1000' })).json();
+  const row = saved.items.find(x => x.code === '000021');
+  assert.equal(row.pendingAmount, 1000);
+  assert.equal(row.shares, null);
+  // Once a quote exists the client writes the converted shares and clears the flag.
+  const settled = await (await api('action=save', { code: '000021', shares: '500', cost: '2', pendingAmount: '' })).json();
+  const done = settled.items.find(x => x.code === '000021');
+  assert.equal(done.shares, 500);
+  assert.equal(done.pendingAmount, null);
+  // An omitted `pendingAmount` must not wipe a pending record on unrelated saves.
+  await api('action=save', { code: '000021', shares: '', cost: '', pendingAmount: '2000' });
+  const kept = await (await api('action=save', { code: '000021', name: '待确认基金' })).json();
+  assert.equal(kept.items.find(x => x.code === '000021').pendingAmount, 2000);
+  await api('action=delete', { code: '000021' });
+});
+
 test('savesettings + indices reflect selection', async () => {
   const save = await api('action=savesettings', { key: 'indices', value: ['000001', 'HSI'] });
   assert.equal(save.statusCode, 200);

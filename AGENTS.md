@@ -36,6 +36,11 @@ node -e "import('./lib/store.js').then(async m => { const db = m.openDb(); conso
   删条目则会在旧库里留下残行。`indexlist` 测试断言恰好 **29** 条指数。
 - `seedDemoHoldings()` 会在某个账号首次 `action=list` 时写入 10 条假持仓
   （按账号用 `meta` 去重）。
+- **自选不再是「份额为空」。** `holdings.watch` 才是自选标记；旧库在 `openDb()`
+  里按 `shares IS NULL AND cost IS NULL` 补齐。`action=watch` 只改标记，不动份额；
+  `save` 省略 `watch` 时保留原值。
+- **待确认金额**存在 `holdings.pending_amount`：取不到净值时只存金额，客户端拿到
+  净值后写回份额并清空该列。`save` 省略 `pendingAmount` 时保留原值。
 - 东方财富接口需要 `referer` 头；`fundgz` 返回的是 JSONP（`jsonpgz(...)`）而不是
   JSON。行情接口只接受 6 位数字代码、上限 `MAX_CODES`（60）；指数 / ETF 走
   `?market=1` 与 SQLite 里的 `secid`。
@@ -58,6 +63,8 @@ node -e "import('./lib/store.js').then(async m => { const db = m.openDb(); conso
   颜色只能用 DSH 主题变量（`--dsw-alias-*`），不要写字面色值。
 - 跨组件状态用 window CustomEvent（`ft-interval-changed`、`ft-lib-changed`）；
   没有共享 store，每个标签页各自取数。
+- 一级 / 二级 Tab 的顺序与当前页签存在 localStorage `fund-tracker.tab-order.v1`；
+  `SortableTabs` 统一处理拖动、`Alt+←/→` 与 `withDefaults()` 兜底。
 - 客户端只在 `apply()` 里解析一次语言（`ctx.locale.getLocale()`），从
   `DICTS['zh-CN' | 'en-US']` 取词；两份词典的 key 必须完全一致。
 - Host 端数据库访问是同步的 `node:sqlite`（`DatabaseSync`）；store 函数会吞掉错误

@@ -8,6 +8,77 @@ window.__ModuleLoader__.load({
     const CACHE_KEY = 'fund-tracker.cache.v2';
     const INTERVAL_KEY = 'fund-tracker.interval.v1';
     const INTERVAL_OPTIONS = [15, 30, 60, 120, 300];
+    // Codes currently being settled from "pending amount" to shares (guards the
+    // effect against re-entering while its own save is in flight).
+    const settleLocks = new Set();
+    const TAB_ORDER_KEY = 'fund-tracker.tab-order.v1';
+    const MAIN_TABS = ['market', 'watch', 'mine', 'settings'];
+    const MARKET_SUBS = ['index', 'fund', 'etf'];
+    const WATCH_SUBS = ['index', 'fund'];
+
+    function loadTabState() {
+      try {
+        const value = JSON.parse(localStorage.getItem(TAB_ORDER_KEY) || '{}');
+        return value && typeof value === 'object' ? value : {};
+      } catch { return {}; }
+    }
+    function saveTabState(state) {
+      try { localStorage.setItem(TAB_ORDER_KEY, JSON.stringify(state)); } catch {}
+    }
+    function withDefaults(list, defaults) {
+      const kept = Array.isArray(list) ? list.filter(k => defaults.includes(k)) : [];
+      return [...kept, ...defaults.filter(k => !kept.includes(k))];
+    }
+    function pick(value, defaults, fallback) {
+      return defaults.includes(value) ? value : fallback;
+    }
+
+    // First- and second-level tabs: drag to reorder, Alt+←/→ for keyboard users.
+    // Order + active tab live in localStorage, so they survive a reload.
+    function SortableTabs({ t, className, items, active, onSelect, onOrderChange }) {
+      const [dragKey, setDragKey] = useState(null);
+      const [overKey, setOverKey] = useState(null);
+      const move = (from, to) => {
+        const keys = items.map(x => x.key);
+        const a = keys.indexOf(from);
+        const b = keys.indexOf(to);
+        if (a < 0 || b < 0 || a === b) return;
+        const next = keys.slice();
+        next.splice(a, 1);
+        next.splice(b, 0, from);
+        onOrderChange && onOrderChange(next);
+      };
+      return h('div', { className, role: 'tablist' },
+        items.map(item => h('button', {
+          key: item.key,
+          className: `ft-tab${active === item.key ? ' ft-tab-active' : ''} ft-tab-drag${dragKey === item.key ? ' ft-tab-dragging' : ''}${overKey === item.key && dragKey !== item.key ? ' ft-tab-dragover' : ''}`,
+          draggable: true,
+          role: 'tab',
+          'aria-selected': active === item.key,
+          title: t('dragHint'),
+          onClick: () => onSelect && onSelect(item.key),
+          onDragStart: e => {
+            setDragKey(item.key);
+            if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', item.key); }
+          },
+          onDragOver: e => { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'; setOverKey(item.key); },
+          onDragLeave: () => setOverKey(k => (k === item.key ? null : k)),
+          onDrop: e => {
+            e.preventDefault();
+            const from = dragKey || (e.dataTransfer && e.dataTransfer.getData('text/plain'));
+            move(from, item.key);
+            setDragKey(null); setOverKey(null);
+          },
+          onDragEnd: () => { setDragKey(null); setOverKey(null); },
+          onKeyDown: e => {
+            if (!e.altKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+            e.preventDefault();
+            const i = items.findIndex(x => x.key === item.key);
+            const j = e.key === 'ArrowLeft' ? i - 1 : i + 1;
+            if (j >= 0 && j < items.length) move(item.key, items[j].key);
+          },
+        }, item.label)));
+    }
 
     const DICTS = {
       'zh-CN': {
@@ -103,8 +174,9 @@ window.__ModuleLoader__.load({
         settingsHint: '刷新间隔、基金基础库与指数显示配置已移至：设置 Tab',
         tabHold: '持仓',
         tabWatch: '自选',
-        toWatch: '转为自选',
-        toHold: '设为持仓',
+        toWatch: '加入我的自选',
+        toHold: '加入持仓',
+        inWatch: '已在自选',
         watchEmpty: '暂无自选基金。在行情页或下方搜索点「＋ 加自选」即可关注。',
         prevClose: '昨收',
         chg: '涨跌额',
@@ -114,6 +186,7 @@ window.__ModuleLoader__.load({
         sortUp: '涨幅高→低',
         sortDown: '涨幅低→高',
         actions: '操作',
+        dragHint: '拖动可调整顺序（Alt+← / Alt+→ 也可以）',
         addFund: '添加基金',
         addFirst: '添加第一只基金',
         confirmAdd: '确认加仓',
@@ -129,6 +202,11 @@ window.__ModuleLoader__.load({
         holdCount: n => `持仓 ${n} 只`,
         costShort: '成本',
         sharesShort: '份额',
+        amountShort: '金额（元）',
+        amountHint: '填金额时按最新净值折算份额，份额与金额可只填一个',
+        pendingCalc: '待确认',
+        pendingHint: '未取到净值，已记为待确认；第二天取到净值后自动折算份额并保存',
+        amountRule: '金额 ÷ 净值 = 份额',
       },
       'en-US': {
         panel: 'Fund assistant',
@@ -223,8 +301,9 @@ window.__ModuleLoader__.load({
         settingsHint: 'Refresh interval, fund library and index display moved to: Settings → Fund tracker',
         tabHold: 'Holdings',
         tabWatch: 'Watchlist',
-        toWatch: 'To watchlist',
-        toHold: 'Set position',
+        toWatch: 'Add to watchlist',
+        toHold: 'Add to holdings',
+        inWatch: 'In watchlist',
         watchEmpty: 'No watchlist items yet. Add from the market tab or search below.',
         prevClose: 'Prev close',
         chg: 'Change',
@@ -234,6 +313,7 @@ window.__ModuleLoader__.load({
         sortUp: 'Gain high→low',
         sortDown: 'Gain low→high',
         actions: 'Actions',
+        dragHint: 'Drag to reorder (or Alt+← / Alt+→)',
         addFund: 'Add fund',
         addFirst: 'Add your first fund',
         confirmAdd: 'Confirm buy',
@@ -249,6 +329,11 @@ window.__ModuleLoader__.load({
         holdCount: n => `${n} holdings`,
         costShort: 'Cost',
         sharesShort: 'Shares',
+        amountShort: 'Amount (CNY)',
+        amountHint: 'Amount is converted to shares at the latest NAV; fill either shares or amount',
+        pendingCalc: 'Pending',
+        pendingHint: 'No NAV yet, saved as pending — shares are calculated and stored after the next quote',
+        amountRule: 'amount ÷ NAV = shares',
       },
     };
     const currentLocaleRef = { id: 'zh-CN' };
@@ -376,7 +461,13 @@ window.__ModuleLoader__.load({
 .ft-subtabs{display:flex;gap:2px;margin:0 0 8px;background:var(--dsw-alias-bg-layer-2);border-radius:8px;padding:2px;}
 .ft-subtabs .ft-tab{flex:1;text-align:center;border-radius:6px;border-bottom:none;}
 .ft-subtabs .ft-tab-active{background:var(--dsw-alias-bg-layer-1);}
+.ft-tab-drag{cursor:grab;}
+.ft-tab-drag:active{cursor:grabbing;}
+.ft-tab-dragover{outline:2px dashed var(--dsw-alias-brand-primary);outline-offset:-2px;}
+.ft-tab-dragging{opacity:.45;}
 .ft-badge{display:inline-block;min-width:56px;padding:1px 6px;border:1px solid transparent;border-radius:6px;font-weight:600;text-align:center;font-variant-numeric:tabular-nums;}
+.ft-flag{display:inline-block;margin-left:6px;padding:0 6px;border-radius:999px;font-size:10px;line-height:16px;border:1px solid var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary);vertical-align:1px;}
+.ft-flag-pending{border-color:var(--dsw-alias-label-secondary);color:var(--dsw-alias-label-secondary);}
 .ft-pager{display:flex;gap:8px;align-items:center;justify-content:center;margin-top:10px;}
 .ft-type{display:inline-block;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-2);border-radius:4px;padding:0 4px;font-size:11px;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:1px;}
 .ft-idx-cell{display:flex;flex-direction:column;gap:2px;align-items:center;}
@@ -415,17 +506,24 @@ window.__ModuleLoader__.load({
 .ft-card-fig{display:flex;flex-direction:column;align-items:flex-end;gap:2px;text-align:right;flex-shrink:0;}
 .ft-amount{font-weight:600;font-size:13px;color:var(--dsw-alias-label-primary);}
 .ft-today{color:var(--dsw-alias-label-secondary);}
-.ft-more{flex-shrink:0;min-width:28px;min-height:28px;padding:0 6px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);border-radius:6px;cursor:pointer;font:inherit;}
-.ft-more:hover{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-brand-primary);}
-.ft-more-on{color:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);}
+.ft-more{flex-shrink:0;display:inline-flex;align-items:center;gap:3px;min-height:30px;padding:0 10px;border:1px solid var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-brand-primary);border-radius:8px;cursor:pointer;font:inherit;font-size:11px;font-weight:600;white-space:nowrap;}
+.ft-more:hover{background:var(--dsw-alias-bg-layer-1);}
+.ft-more-on{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-bg-base);}
 .ft-card-meta{display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) auto;gap:4px 8px;margin-top:6px;align-items:end;}
 .ft-meta-cell{display:flex;flex-direction:column;gap:1px;min-width:0;}
 .ft-meta-label{color:var(--dsw-alias-label-secondary);font-size:11px;}
 .ft-meta-value{color:var(--dsw-alias-label-primary);}
 .ft-card-meta .ft-link{justify-self:end;align-self:end;white-space:nowrap;}
 .ft-card-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;padding-top:8px;border-top:1px solid var(--dsw-alias-border-l1);}
-.ft-card-actions .ft-act,.ft-card-actions .ft-del{min-height:28px;padding:3px 8px;}
-.ft-card-actions .ft-del{color:var(--dsw-alias-state-error-primary);}
+.ft-card-actions .ft-act,.ft-card-actions .ft-del{min-height:30px;padding:3px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:11px;font-weight:600;white-space:nowrap;}
+.ft-card-actions .ft-act:hover{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-layer-2);}
+.ft-card-actions .ft-act-buy{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-layer-2);}
+.ft-card-actions .ft-act-watch{border-style:dashed;}
+.ft-card-actions .ft-act-on{border-style:solid;border-color:var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary);background:none;cursor:default;}
+.ft-card-actions .ft-del{border-color:var(--dsw-alias-border-l2);color:var(--dsw-alias-state-error-primary);}
+.ft-card-actions .ft-del:hover{border-color:var(--dsw-alias-state-error-primary);background:var(--dsw-alias-bg-layer-2);}
+.ft-card-actions button:disabled{opacity:.75;}
+.ft-card-open{border-color:var(--dsw-alias-brand-primary);}
 .ft-form{border:1px solid var(--dsw-alias-border-l2);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--dsw-alias-bg-layer-2);}
 .ft-card .ft-form{margin-top:8px;margin-bottom:0;}
 .ft-form-title{font-weight:600;margin:0 0 8px;color:var(--dsw-alias-label-primary);}
@@ -943,32 +1041,38 @@ window.__ModuleLoader__.load({
       );
     }
 
-    function MarketTab({ t, market, idxQuotes, idxConfig, onSaveSelection, holdingsCodes, onWatch, onOpenDetail, refreshKey }) {
-      const [sub, setSub] = useState('index');
+    function MarketTab({ t, market, idxQuotes, idxConfig, onSaveSelection, holdingsCodes, onWatch, onOpenDetail, refreshKey,
+                         sub, setSub, subOrder, onOrderChange }) {
+      const active = pick(sub, MARKET_SUBS, 'index');
+      const order = withDefaults(subOrder, MARKET_SUBS);
+      const choose = setSub || (() => {});
       return h(React.Fragment, null,
-        h('div', { className: 'ft-subtabs', role: 'tablist' },
-          h('button', { className: `ft-tab${sub === 'index' ? ' ft-tab-active' : ''}`, onClick: () => setSub('index') }, t('subIdx')),
-          h('button', { className: `ft-tab${sub === 'fund' ? ' ft-tab-active' : ''}`, onClick: () => setSub('fund') }, t('subFund')),
-          h('button', { className: `ft-tab${sub === 'etf' ? ' ft-tab-active' : ''}`, onClick: () => setSub('etf') }, t('subEtf')),
-        ),
-        sub === 'index' && h(IndexSub, { t, idxQuotes, idxConfig, onSaveSelection, holdingsCodes, onWatch, refreshKey }),
-        sub === 'fund' && h(FundSub, { t, holdingsCodes, onWatch, onOpenDetail, refreshKey, marketQuotes }),
-        sub === 'etf' && h(EtfSub, { t, etfs: market.etfs, holdingsCodes, onWatch, onOpenDetail, legacy: market.legacy }),
+        h(SortableTabs, {
+          t, className: 'ft-subtabs', items: order.map(k => ({ key: k, label: t(k === 'index' ? 'subIdx' : k === 'fund' ? 'subFund' : 'subEtf') })),
+          active, onSelect: choose, onOrderChange,
+        }),
+        active === 'index' && h(IndexSub, { t, idxQuotes, idxConfig, onSaveSelection, holdingsCodes, onWatch, refreshKey }),
+        active === 'fund' && h(FundSub, { t, holdingsCodes, onWatch, onOpenDetail, refreshKey, marketQuotes }),
+        active === 'etf' && h(EtfSub, { t, etfs: market.etfs, holdingsCodes, onWatch, onOpenDetail, legacy: market.legacy }),
       );
     }
 
-    function WatchTab({ t, idxQuotes, idxConfig, onSaveSelection, rows, editing, setEditing, onSaveEdit, onRemove, onOpenDetail, saving, form, setForm, marketQuotes }) {
+    function WatchTab({ t, idxQuotes, idxConfig, onSaveSelection, rows, editing, setEditing, onSaveEdit, onRemove, onOpenDetail, saving, form, setForm, marketQuotes,
+                        sub, setSub, subOrder, onOrderChange }) {
       const selected = idxConfig.selected || [];
       const removeIdx = code => onSaveSelection(selected.filter(c => c !== code), () => {});
-      const watchRows = rows.filter(r => r.hold.shares == null && r.hold.cost == null)
+      const watchRows = rows.filter(r => r.hold.watch || (r.hold.watch == null && r.hold.shares == null && r.hold.cost == null))
         .sort((a, b) => (b.changePct ?? -Infinity) - (a.changePct ?? -Infinity));
-      const [sub, setSub] = useState('index');
+      const active = pick(sub, WATCH_SUBS, 'index');
+      const order = withDefaults(subOrder, WATCH_SUBS);
+      const choose = setSub || (() => {});
       return h(React.Fragment, null,
-        h('div', { className: 'ft-subtabs', role: 'tablist' },
-          h('button', { className: `ft-tab${sub === 'index' ? ' ft-tab-active' : ''}`, onClick: () => setSub('index') }, `${t('indices')} (${selected.length})`),
-          h('button', { className: `ft-tab${sub === 'fund' ? ' ft-tab-active' : ''}`, onClick: () => setSub('fund') }, `${t('subFund')} (${watchRows.length})`),
-        ),
-        sub === 'index' && h('div', { className: 'ft-section' },
+        h(SortableTabs, {
+          t, className: 'ft-subtabs',
+          items: order.map(k => ({ key: k, label: k === 'index' ? `${t('indices')} (${selected.length})` : `${t('subFund')} (${watchRows.length})` })),
+          active, onSelect: choose, onOrderChange,
+        }),
+        active === 'index' && h('div', { className: 'ft-section' },
           selected.length === 0
             ? h('div', { className: 'ft-empty' }, t('watchIdxEmpty'))
             : h('div', { className: 'ft-idx-grid' },
@@ -988,7 +1092,7 @@ window.__ModuleLoader__.load({
                 }),
               ),
         ),
-        sub === 'fund' && h('div', { className: 'ft-section' },
+        active === 'fund' && h('div', { className: 'ft-section' },
           watchRows.length === 0
             ? h('div', { className: 'ft-empty' }, t('watchEmpty'))
             : h('table', { className: 'ft-table' },
@@ -1001,6 +1105,7 @@ window.__ModuleLoader__.load({
                         h('span', { className: 'ft-code' }, r.hold.code),
                         h('input', { className: 'ft-input ft-input-sm', placeholder: t('shares'), inputMode: 'decimal', value: form.shares, onChange: e => setForm({ ...form, shares: e.target.value }) }),
                         h('input', { className: 'ft-input ft-input-sm', placeholder: t('cost'), inputMode: 'decimal', value: form.cost, onChange: e => setForm({ ...form, cost: e.target.value }) }),
+                        h('input', { className: 'ft-input ft-input-sm', placeholder: t('amountShort'), inputMode: 'decimal', value: form.amount || '', onChange: e => setForm({ ...form, amount: e.target.value }) }),
                         h('button', { className: 'ft-btn', disabled: saving, onClick: () => onSaveEdit(r.hold.code) }, t('add')),
                         h('button', { className: 'ft-btn', onClick: () => setEditing(null) }, t('cancel')),
                       ),
@@ -1009,12 +1114,13 @@ window.__ModuleLoader__.load({
                       h('td', null,
                         (r.q && r.q.name) || r.hold.name || r.hold.code, ' ',
                         h('span', { className: 'ft-code' }, r.hold.code),
+                        r.hold.shares != null && h('span', { className: 'ft-flag' }, t('tabHold')),
                       ),
                       h('td', null, h(SectorCell, { t, name: r.hold.name || r.hold.code, marketQuotes })),
                       h('td', null, money(r.nav)),
                       h('td', null, h(ChangeBadge, { v: (r.q && r.q.yesterdayPct != null) ? r.q.yesterdayPct : r.changePct })),
                       h('td', { onClick: e => e.stopPropagation() },
-                        h('button', { className: 'ft-act', title: t('toHold'), onClick: () => { setEditing(r.hold.code); setForm({ shares: '', cost: '', code: r.hold.code }); } }, '✎ ', t('toHold')),
+                        h('button', { className: 'ft-act', title: r.hold.shares != null ? t('edit') : t('toHold'), onClick: () => { setEditing(r.hold.code); setForm({ shares: r.hold.shares == null ? '' : String(r.hold.shares), cost: r.hold.cost == null ? '' : String(r.hold.cost), code: r.hold.code, amount: '' }); } }, '✎ ', r.hold.shares != null ? t('edit') : t('toHold')),
                         h('button', { className: 'ft-del', title: t('remove'), 'aria-label': `${t('remove')} ${r.hold.code}`, onClick: () => onRemove(r.hold.code) }, '✕'),
                       ),
                     ))),
@@ -1023,24 +1129,24 @@ window.__ModuleLoader__.load({
       );
     }
 
-    function MineTab({ t, rows, totals, loggedIn, editing, setEditing, onSaveEdit, onRemoveAsk, onToWatch, onOpenDetail, sortBy, setSortBy, marketQuotes,
+    function MineTab({ t, rows, totals, loggedIn, editing, setEditing, onSaveEdit, onRemoveAsk, onAddWatch, onOpenDetail, sortBy, setSortBy, marketQuotes,
                        trade, setTrade, onTradeConfirm, onTradeAsk,
                        form, setForm, searchQ, setSearchQ, suggest, onSaveForm, saving,
                        importOpen, setImportOpen, importText, setImportText, onImport, msg, onRefresh, onGoWatch }) {
       const canWrite = loggedIn;
-      const positions = rows.filter(r => r.hold.shares != null || r.hold.cost != null);
-      const watchOnlyCount = rows.filter(r => r.hold.shares == null && r.hold.cost == null).length;
+      const positions = rows.filter(r => r.hold.shares != null || r.hold.cost != null || r.pending != null);
+      const watchedCount = rows.filter(r => r.hold.watch).length;
       const mask = v => (loggedIn ? v : '***');
-      const [menuCode, setMenuCode] = useState(null);
       const [addOpen, setAddOpen] = useState(false);
+      const [menuCode, setMenuCode] = useState(null);
 
       // Add / import / edit / trade panels are mutually exclusive; opening one closes the rest.
       const closeEditTrade = () => { setEditing(null); setTrade(null); };
       const openAdd = () => {
         closeEditTrade(); setImportOpen(false); setMenuCode(null); setAddOpen(true);
-        setForm({ code: '', shares: '', cost: '' }); setSearchQ('');
+        setForm({ code: '', shares: '', cost: '', amount: '' }); setSearchQ('');
       };
-      const closeAdd = () => { setAddOpen(false); setForm({ code: '', shares: '', cost: '' }); setSearchQ(''); };
+      const closeAdd = () => { setAddOpen(false); setForm({ code: '', shares: '', cost: '', amount: '' }); setSearchQ(''); };
       const toggleImport = () => { closeEditTrade(); setAddOpen(false); setMenuCode(null); setImportOpen(o => !o); };
       const startEdit = r => {
         closeEditTrade(); setAddOpen(false); setImportOpen(false); setMenuCode(r.hold.code); setEditing(r.hold.code);
@@ -1048,10 +1154,23 @@ window.__ModuleLoader__.load({
           shares: r.hold.shares == null ? '' : String(r.hold.shares),
           cost: r.hold.cost == null ? '' : String(r.hold.cost),
           code: r.hold.code,
+          amount: '',
         });
       };
       const startTrade = (r, mode) => {
         setEditing(null); setAddOpen(false); setImportOpen(false); setMenuCode(r.hold.code); onTradeAsk(r.hold, mode);
+      };
+      // One card's actions open at a time; opening another closes edit/trade panels.
+      const toggleMenu = code => {
+        if (menuCode === code) {
+          setMenuCode(null);
+          if (editing === code) setEditing(null);
+          if (trade && trade.code === code) setTrade(null);
+        } else {
+          setEditing(null);
+          setTrade(null);
+          setMenuCode(code);
+        }
       };
 
       const msgNode = () => msg && h('div', {
@@ -1068,6 +1187,16 @@ window.__ModuleLoader__.load({
         h('span', { className: 'ft-meta-label' }, label),
         h('span', { className: 'ft-meta-value ft-num', style: color ? { color } : null }, value),
       );
+
+      const amountPreview = r => {
+        const amt = String(form.amount || '').trim();
+        if (amt === '') return null;
+        const n = Number(amt);
+        if (!isFinite(n) || n <= 0) return t('amountRule');
+        const nav = r.nav;
+        return nav != null ? `${n.toLocaleString('zh-CN')} ÷ ${nav} ≈ ${(n / nav).toFixed(2)} ${t('sharesShort')}`
+          : t('pendingHint');
+      };
 
       const editPanel = r => h('div', { className: 'ft-form', onKeyDown: e => { if (e.key === 'Escape') setEditing(null); } },
         h('div', { className: 'ft-form-title' }, `${t('edit')} · ${(r.q && r.q.name) || r.hold.name || r.hold.code}`),
@@ -1088,15 +1217,28 @@ window.__ModuleLoader__.load({
               onKeyDown: e => { if (e.key === 'Enter') onSaveEdit(r.hold.code); },
             }),
           ),
+          h('div', { className: 'ft-field' },
+            h('label', { className: 'ft-field-label', htmlFor: `ft-edit-amount-${r.hold.code}` },
+              `${t('amountShort')} `, h('span', { className: 'ft-field-hint' }, t('amountRule'))),
+            h('input', {
+              id: `ft-edit-amount-${r.hold.code}`, className: 'ft-input ft-input-sm', inputMode: 'decimal',
+              value: form.amount || '', onChange: e => setForm({ ...form, amount: e.target.value }),
+              onKeyDown: e => { if (e.key === 'Enter') onSaveEdit(r.hold.code); },
+            }),
+          ),
           h('button', { className: 'ft-btn', disabled: saving, onClick: () => onSaveEdit(r.hold.code), title: t('confirmEdit') }, t('add')),
           h('button', { className: 'ft-btn', onClick: () => setEditing(null) }, t('cancel')),
         ),
+        amountPreview(r) && h('div', { className: 'ft-field-hint', style: { marginTop: 6 } }, amountPreview(r)),
       );
 
       const tradePanel = r => {
         const cur = r.hold.shares == null ? 0 : Number(r.hold.shares) || 0;
-        const qty = Number(form.shares);
-        const qtyOk = String(form.shares == null ? '' : form.shares).trim() !== '' && isFinite(qty);
+        const direct = String(form.shares == null ? '' : form.shares).trim();
+        const amt = String(form.amount || '').trim();
+        const fromAmount = amt !== '' && r.nav != null ? Number((Number(amt) / r.nav).toFixed(2)) : NaN;
+        const qty = direct !== '' ? Number(direct) : fromAmount;
+        const qtyOk = isFinite(qty) && qty > 0;
         const after = qtyOk ? Math.max(0, cur + (trade.mode === 'add' ? qty : -qty)) : null;
         return h('div', { className: 'ft-form', onKeyDown: e => { if (e.key === 'Escape') setTrade(null); } },
           h('div', { className: 'ft-form-title' },
@@ -1114,6 +1256,15 @@ window.__ModuleLoader__.load({
                 onKeyDown: e => { if (e.key === 'Enter') onTradeConfirm(); },
               }),
             ),
+            h('div', { className: 'ft-field' },
+              h('label', { className: 'ft-field-label', htmlFor: `ft-trade-amount-${r.hold.code}` },
+                trade.mode === 'add' ? `${t('addShare')}${t('amountShort')}` : `${t('reduceShare')}${t('amountShort')}`),
+              h('input', {
+                id: `ft-trade-amount-${r.hold.code}`, className: 'ft-input ft-input-sm', inputMode: 'decimal',
+                value: form.amount || '', onChange: e => setForm({ ...form, amount: e.target.value }),
+                onKeyDown: e => { if (e.key === 'Enter') onTradeConfirm(); },
+              }),
+            ),
             h('span', { className: 'ft-num', style: { color: 'var(--dsw-alias-label-secondary)' } },
               after != null ? t('afterTrade')(after) : ''),
             h('button', {
@@ -1126,12 +1277,19 @@ window.__ModuleLoader__.load({
 
       const actionBar = r => {
         const name = (r.q && r.q.name) || r.hold.name || r.hold.code;
-        return h('div', { className: 'ft-card-actions' },
-          h('button', { className: 'ft-act', title: `${t('addShare')} ${name}`, 'aria-label': `${t('addShare')} ${name}`, onClick: () => startTrade(r, 'add') }, `＋ ${t('addShare')}`),
+        const inWatch = !!r.hold.watch;
+        return h('div', { className: 'ft-card-actions', role: 'group', 'aria-label': `${t('actions')} ${name}` },
+          h('button', { className: 'ft-act ft-act-buy', title: `${t('addShare')} ${name}`, 'aria-label': `${t('addShare')} ${name}`, onClick: () => startTrade(r, 'add') }, `＋ ${t('addShare')}`),
           h('button', { className: 'ft-act', title: `${t('reduceShare')} ${name}`, 'aria-label': `${t('reduceShare')} ${name}`, onClick: () => startTrade(r, 'reduce') }, `－ ${t('reduceShare')}`),
           h('button', { className: 'ft-act', title: `${t('edit')} ${name}`, 'aria-label': `${t('edit')} ${name}`, onClick: () => startEdit(r) }, t('edit')),
-          h('button', { className: 'ft-act', title: `${t('toWatch')} ${name}`, 'aria-label': `${t('toWatch')} ${name}`, onClick: () => onToWatch(r.hold) }, t('toWatch')),
-          h('button', { className: 'ft-del', title: `${t('remove')} ${name}`, 'aria-label': `${t('remove')} ${name}`, onClick: () => onRemoveAsk(r.hold) }, t('remove')),
+          h('button', {
+            className: `ft-act ft-act-watch${inWatch ? ' ft-act-on' : ''}`,
+            title: inWatch ? `${t('inWatch')} ${name}` : `${t('toWatch')} ${name}`,
+            'aria-label': inWatch ? `${t('inWatch')} ${name}` : `${t('toWatch')} ${name}`,
+            'aria-pressed': inWatch, disabled: inWatch || saving,
+            onClick: () => onAddWatch(r.hold),
+          }, inWatch ? `★ ${t('inWatch')}` : `☆ ${t('toWatch')}`),
+          h('button', { className: 'ft-del', title: `${t('remove')} ${name}`, 'aria-label': `${t('remove')} ${name}`, onClick: () => onRemoveAsk(r.hold) }, `✕ ${t('remove')}`),
         );
       };
 
@@ -1174,9 +1332,18 @@ window.__ModuleLoader__.load({
               value: form.cost, onChange: e => setForm({ ...form, cost: e.target.value }),
             }),
           ),
+          h('div', { className: 'ft-field' },
+            h('label', { className: 'ft-field-label', htmlFor: 'ft-add-amount' },
+              `${t('amountShort')} `, h('span', { className: 'ft-field-hint' }, t('amountRule'))),
+            h('input', {
+              id: 'ft-add-amount', className: 'ft-input ft-input-sm', inputMode: 'decimal',
+              value: form.amount || '', onChange: e => setForm({ ...form, amount: e.target.value }),
+            }),
+          ),
           h('button', { className: 'ft-btn ft-btn-primary', disabled: saving, onClick: onSaveForm }, t('add')),
           h('button', { className: 'ft-btn', onClick: closeAdd }, t('cancel')),
         ),
+        h('div', { className: 'ft-field-hint', style: { marginTop: 6 } }, t('amountHint')),
         msgNode(),
       );
 
@@ -1199,7 +1366,7 @@ window.__ModuleLoader__.load({
         const code = r.hold.code;
         const name = (r.q && r.q.name) || r.hold.name || code;
         const expanded = canWrite && (menuCode === code || editing === code || (trade && trade.code === code));
-        return h('li', { key: code, className: 'ft-card' },
+        return h('li', { key: code, className: `ft-card${expanded ? ' ft-card-open' : ''}` },
           h('div', { className: 'ft-card-main' },
             h('div', { className: 'ft-card-id' },
               h('button', { className: 'ft-name', title: t('detail'), onClick: () => onOpenDetail(r.hold) }, name),
@@ -1207,34 +1374,26 @@ window.__ModuleLoader__.load({
                 h('span', { className: 'ft-code ft-num' }, code),
                 ' ',
                 h(SectorCell, { t, name: r.hold.name || code, marketQuotes }),
+                r.pending != null && h('span', { className: 'ft-flag ft-flag-pending' }, t('pendingCalc')),
+                r.hold.watch && h('span', { className: 'ft-flag' }, t('tabWatch')),
               ),
             ),
             h('div', { className: 'ft-card-fig' },
-              h('span', { className: 'ft-amount ft-num' }, mask(money(r.amount))),
+              h('span', { className: 'ft-amount ft-num' }, r.pending != null ? t('pendingCalc') : mask(money(r.amount))),
               h('span', { className: 'ft-today ft-num', style: { color: loggedIn ? signColor(r.todayProfit) : null } },
-                `${mask(signedMoney(r.todayProfit))} (${pct(r.changePct)})`),
+                r.pending != null ? '—' : `${mask(signedMoney(r.todayProfit))} (${pct(r.changePct)})`),
             ),
             canWrite && h('button', {
               className: `ft-more${expanded ? ' ft-more-on' : ''}`, 'aria-expanded': expanded,
               'aria-label': t('actions'), title: t('actions'),
-              onClick: () => {
-                if (menuCode === code) {
-                  setMenuCode(null);
-                  if (editing === code) setEditing(null);
-                  if (trade && trade.code === code) setTrade(null);
-                } else {
-                  setEditing(null);
-                  setTrade(null);
-                  setMenuCode(code);
-                }
-              },
-            }, '⋯'),
+              onClick: () => toggleMenu(code),
+            }, t('actions'), ' ', expanded ? '▴' : '▾'),
           ),
           h('div', { className: 'ft-card-meta' },
             metaCell(t('nav'), money(r.nav)),
             metaCell(t('costShort'), mask(money(r.hold.cost))),
-            metaCell(t('sharesShort'), mask(money(r.hold.shares))),
-            metaCell(t('totalPct'), loggedIn ? pct(r.totalPct) : '***', loggedIn ? signColor(r.totalProfit) : null),
+            metaCell(t('sharesShort'), r.pending != null ? t('pendingCalc') : mask(money(r.hold.shares))),
+            metaCell(t('totalPct'), r.pending != null ? '—' : loggedIn ? pct(r.totalPct) : '***', loggedIn ? signColor(r.totalProfit) : null),
             h('button', { className: 'ft-link', onClick: () => onOpenDetail(r.hold) }, `${t('detail')} ›`),
           ),
           expanded && (trade && trade.code === code ? tradePanel(r) : editing === code ? editPanel(r) : actionBar(r)),
@@ -1282,8 +1441,8 @@ window.__ModuleLoader__.load({
               canWrite && h('div', { className: 'ft-actions', style: { marginTop: 0, justifyContent: 'center' } },
                 h('button', { className: 'ft-btn ft-btn-primary', onClick: openAdd }, `＋ ${t('addFirst')}`),
                 h('button', { className: 'ft-btn', onClick: toggleImport, 'aria-expanded': importOpen }, t('importShort'))),
-              watchOnlyCount > 0 && h('div', { style: { marginTop: 8 } },
-                t('watchRemain')(watchOnlyCount), ' ',
+              watchedCount > 0 && h('div', { style: { marginTop: 8 } },
+                t('watchRemain')(watchedCount), ' ',
                 h('button', { className: 'ft-link', onClick: onGoWatch }, t('tabWatchPage'))),
             )
           : h('ul', { className: 'ft-list' }, positions.map(card)),
@@ -1294,12 +1453,23 @@ window.__ModuleLoader__.load({
     function FundOverlay() {
       const t = makeT();
       const [open, setOpen] = useState(false);
-      const [tab, setTab] = useState('market');
+      const [tabState, setTabState] = useState(loadTabState);
+      const updateTabState = patch => setTabState(prev => {
+        const next = { ...prev, ...patch };
+        saveTabState(next);
+        return next;
+      });
+      const tab = pick(tabState.activeMain, MAIN_TABS, 'market');
+      const mainOrder = withDefaults(tabState.main, MAIN_TABS);
+      const marketOrder = withDefaults(tabState.market, MARKET_SUBS);
+      const watchOrder = withDefaults(tabState.watch, WATCH_SUBS);
+      const marketSub = pick(tabState.marketActive, MARKET_SUBS, 'index');
+      const watchSub = pick(tabState.watchActive, WATCH_SUBS, 'index');
       const [loggedIn, setLoggedIn] = useState(false);
       const [holdings, setHoldings] = useState(loadCache);
       const [refreshKey, setRefreshKey] = useState(0);
       const [intervalSec, setIntervalSecState] = useState(loadInterval);
-      const [form, setForm] = useState({ code: '', shares: '', cost: '' });
+      const [form, setForm] = useState({ code: '', shares: '', cost: '', amount: '' });
       const [editing, setEditing] = useState(null);
       const [sortBy, setSortBy] = useState('today');
       const [searchQ, setSearchQ] = useState('');
@@ -1437,7 +1607,9 @@ window.__ModuleLoader__.load({
         const todayProfit = amount != null && changePct != null ? amount * changePct / (100 + changePct) : null;
         const totalProfit = nav != null && hold.cost != null && hold.shares != null ? (nav - hold.cost) * hold.shares : null;
         const totalPct = nav != null && hold.cost ? (nav / hold.cost - 1) * 100 : null;
-        return { hold, q, nav, changePct, amount, todayProfit, totalProfit, totalPct };
+        // Amount entered before any NAV was known: shares are filled in later.
+        const pending = hold.pendingAmount != null && hold.pendingAmount > 0 ? hold.pendingAmount : null;
+        return { hold, q, nav, changePct, amount, todayProfit, totalProfit, totalPct, pending };
       }), [holdings, allQuotes]);
 
       const totals = useMemo(() => {
@@ -1478,28 +1650,87 @@ window.__ModuleLoader__.load({
           saveCache(data.items);
         }
       };
+      // Adds to / removes from the watchlist only; shares and cost stay untouched.
+      const apiWatch = async (code, on) => {
+        const response = await fetch('/fund-tracker/api?action=watch', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ code, watch: on }),
+        });
+        const data = await response.json();
+        if (data && Array.isArray(data.items)) {
+          setHoldings(data.items);
+          saveCache(data.items);
+        }
+        return data;
+      };
+
+      // Latest NAV for a code, from fundgz (`nav`) or the ETF feed (`price`).
+      const navOf = code => {
+        const q = allQuotes[code];
+        const nav = q ? (q.nav != null ? q.nav : (q.price != null ? q.price : null)) : null;
+        return nav != null && nav > 0 ? nav : null;
+      };
 
       const saveForm = async () => {
         const code = form.code.trim();
         if (!/^\d{6}$/.test(code)) { setMsg({ kind: 'err', text: t('invalidCode') }); return; }
         setSaving(true);
         try {
+          let shares = form.shares.trim();
+          let cost = form.cost.trim();
+          const amount = String(form.amount || '').trim();
+          let pendingAmount;
+          // Amount-only entry: convert with the latest NAV, otherwise remember the
+          // amount and settle it once a quote is available (usually the next day).
+          if (shares === '' && amount !== '') {
+            const nav = navOf(code);
+            const n = Number(amount);
+            if (!isFinite(n) || n <= 0) { setMsg({ kind: 'err', text: t('invalidCode') }); return; }
+            if (nav) {
+              shares = String(Number((n / nav).toFixed(2)));
+              if (cost === '') cost = String(nav);
+            } else {
+              pendingAmount = n;
+            }
+          }
           await apiSave({
             code,
             name: (quotes[code] && quotes[code].name) || holdings.find(x => x.code === code)?.name || '',
-            shares: form.shares.trim(), cost: form.cost.trim(),
+            shares, cost,
+            pendingAmount,
+            // No shares/cost means "watch only", so it lands in 我的自选.
+            watch: shares === '' && cost === '' && pendingAmount == null ? true : undefined,
           });
-          setForm({ code: '', shares: '', cost: '' });
+          setForm({ code: '', shares: '', cost: '', amount: '' });
           setSearchQ('');
           setSuggest([]);
           setEditing(null);
-          setMsg(null);
+          setMsg(pendingAmount != null ? { kind: 'ok', text: t('pendingHint') } : null);
           setRefreshKey(k => k + 1);
         } finally { setSaving(false); }
       };
       const saveEdit = async code => {
         setSaving(true);
-        try { await apiSave({ code, shares: form.shares.trim(), cost: form.cost.trim() }); } finally { setSaving(false); }
+        try {
+          let shares = form.shares.trim();
+          let cost = form.cost.trim();
+          const amount = String(form.amount || '').trim();
+          // Editing by amount rewrites the total position; it needs a NAV, otherwise
+          // the shares the user typed are kept as-is.
+          if (shares === '' && amount !== '') {
+            const nav = navOf(code);
+            const n = Number(amount);
+            if (nav && isFinite(n) && n > 0) {
+              shares = String(Number((n / nav).toFixed(2)));
+              if (cost === '') cost = String(nav);
+            } else {
+              setMsg({ kind: 'err', text: t('pendingHint') });
+              return;
+            }
+          }
+          await apiSave({ code, shares, cost });
+        } finally { setSaving(false); }
         setEditing(null);
         setRefreshKey(k => k + 1);
       };
@@ -1507,8 +1738,50 @@ window.__ModuleLoader__.load({
         if (editing === code) setEditing(null);
         try { await apiDelete(code); } catch {}
       };
-      const toWatch = async hold => {
-        try { await apiSave({ code: hold.code, name: hold.name || '', shares: '', cost: '' }); } catch {}
+
+      // 待计算：录入金额时还取不到净值。之后任意一次刷新拿到净值就折算份额并落库，
+      // 因此它最多停留到下一次行情可取时（通常第二天）。
+      useEffect(() => {
+        if (!loggedIn) return;
+        const ready = holdings
+          .filter(h => h.pendingAmount != null && h.pendingAmount > 0 && !settleLocks.has(h.code))
+          .map(h => ({ h, nav: navOf(h.code) }))
+          .filter(x => x.nav != null);
+        if (ready.length === 0) return;
+        let alive = true;
+        (async () => {
+          for (const { h, nav } of ready) {
+            settleLocks.add(h.code);
+            try {
+              await apiSave({
+                code: h.code,
+                name: h.name || '',
+                shares: String(Number((h.pendingAmount / nav).toFixed(2))),
+                cost: h.cost != null ? String(h.cost) : String(nav),
+                pendingAmount: '',
+              });
+            } catch {
+              // leave it pending; the next refresh retries
+            } finally {
+              settleLocks.delete(h.code);
+            }
+          }
+          if (alive) setRefreshKey(k => k + 1);
+        })();
+        return () => { alive = false; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [holdings, allQuotes, loggedIn]);
+      // Removing from 我的自选 must not delete a real position: watch-only rows are
+      // deleted, positions just lose the watch flag.
+      const removeFromWatch = async hold => {
+        if (editing === hold.code) setEditing(null);
+        try {
+          if (hold.shares == null && hold.cost == null && hold.pendingAmount == null) await apiDelete(hold.code);
+          else await apiWatch(hold.code, false);
+        } catch {}
+      };
+      const addToWatch = async hold => {
+        await addWatch({ code: hold.code, name: hold.name || '' });
       };
       const apiTrade = async (code, delta) => {
         const response = await fetch('/fund-tracker/api?action=trade', {
@@ -1525,23 +1798,32 @@ window.__ModuleLoader__.load({
       };
       const onTradeConfirm = async () => {
         if (!trade) return;
-        const qty = Number(form.shares);
+        let qty = Number(form.shares);
+        if (String(form.shares == null ? '' : form.shares).trim() === '') {
+          const amount = String(form.amount || '').trim();
+          const nav = navOf(trade.code);
+          qty = amount !== '' && nav != null ? Number((Number(amount) / nav).toFixed(2)) : NaN;
+          if (!isFinite(qty)) { setMsg({ kind: 'err', text: t('pendingHint') }); return; }
+        }
         if (!isFinite(qty) || qty <= 0) { setMsg({ kind: 'err', text: t('tradeQtyHint') }); return; }
         setSaving(true);
         try {
           const delta = qty * (trade.mode === 'add' ? 1 : -1);
           const data = await apiTrade(trade.code, delta);
           if (data && data.error) setMsg({ kind: 'err', text: data.error });
-          else { setMsg(null); setTrade(null); setForm({ shares: '', cost: '', code: '' }); setRefreshKey(k => k + 1); }
+          else { setMsg(null); setTrade(null); setForm({ shares: '', cost: '', code: '', amount: '' }); setRefreshKey(k => k + 1); }
         } finally { setSaving(false); }
       };
-      const onTradeAsk = (hold, mode) => { setEditing(null); setTrade({ code: hold.code, mode }); setForm({ shares: '', cost: '', code: hold.code }); };
+      const onTradeAsk = (hold, mode) => { setEditing(null); setTrade({ code: hold.code, mode }); setForm({ shares: '', cost: '', code: hold.code, amount: '' }); };
       const onRemoveAsk = hold => setConfirmDel({ code: hold.code, name: hold.name || hold.code });
       const addWatch = async r => {
-        if (holdings.some(x => x.code === r.code)) return;
         setSaving(true);
         try {
-          await apiSave({ code: r.code, name: r.name, shares: '', cost: '' });
+          if (holdings.some(x => x.code === r.code)) {
+            await apiWatch(r.code, true);
+          } else {
+            await apiSave({ code: r.code, name: r.name, shares: '', cost: '', watch: true });
+          }
           setMsg({ kind: 'ok', text: `${t('watch')}: ${r.name || r.code}` });
           setRefreshKey(k => k + 1);
         } finally { setSaving(false); }
@@ -1554,7 +1836,8 @@ window.__ModuleLoader__.load({
         try {
           for (const p of parsed) {
             if (!holdings.some(x => x.code === p.code)) fresh += 1;
-            await apiSave(p);
+            const watchOnly = p.shares == null && p.cost == null;
+            await apiSave(watchOnly ? { ...p, watch: true } : p);
           }
           setMsg({ kind: 'ok', text: t('imported')(parsed.length, fresh) });
           setImportText('');
@@ -1586,49 +1869,47 @@ window.__ModuleLoader__.load({
               }, '✕'),
             ),
           ),
-          h('div', { className: 'ft-tabs' },
-            h('button', {
-              className: `ft-tab${tab === 'market' ? ' ft-tab-active' : ''}`,
-              onClick: () => setTab('market'),
-            }, t('tabMarket')),
-            h('button', {
-              className: `ft-tab${tab === 'watch' ? ' ft-tab-active' : ''}`,
-              onClick: () => setTab('watch'),
-            }, `${t('tabWatchPage')} (${(idxConfig.selected || []).length + holdings.filter(x => x.shares == null && x.cost == null).length})`),
-            h('button', {
-              className: `ft-tab${tab === 'mine' ? ' ft-tab-active' : ''}`,
-              onClick: () => setTab('mine'),
-            }, `${t('tabMine')} (${holdings.length})`),
-            h('button', {
-              className: `ft-tab${tab === 'settings' ? ' ft-tab-active' : ''}`,
-              onClick: () => setTab('settings'),
-            }, t('tabSettings')),
-          ),
+          h(SortableTabs, {
+            t, className: 'ft-tabs',
+            items: mainOrder.map(k => ({
+              key: k,
+              label: k === 'market' ? t('tabMarket')
+                : k === 'watch' ? `${t('tabWatchPage')} (${(idxConfig.selected || []).length + holdings.filter(x => x.watch).length})`
+                  : k === 'mine' ? `${t('tabMine')} (${holdings.length})` : t('tabSettings'),
+            })),
+            active: tab,
+            onSelect: k => updateTabState({ activeMain: k }),
+            onOrderChange: main => updateTabState({ main }),
+          }),
           tab === 'market'
             ? h(PanelBoundary, null, h(MarketTab, {
                 t, market, idxQuotes, idxConfig,
                 onSaveSelection: saveIndexSelection,
-                holdingsCodes: holdings.map(x => x.code),
+                holdingsCodes: holdings.filter(x => x.watch).map(x => x.code),
                 onWatch: addWatch, onOpenDetail: openDetail, refreshKey,
+                sub: marketSub, setSub: k => updateTabState({ marketActive: k }),
+                subOrder: marketOrder, onOrderChange: market => updateTabState({ market }),
               }))
             : tab === 'watch'
               ? h(PanelBoundary, null, h(WatchTab, {
                   t, idxQuotes, idxConfig,
                   onSaveSelection: saveIndexSelection,
                   rows: sortedRows, editing, setEditing,
-                  onSaveEdit: saveEdit, onRemove: removeFund,
+                  onSaveEdit: saveEdit, onRemove: removeFromWatch,
                   onOpenDetail: openDetail, saving, form, setForm, marketQuotes,
+                  sub: watchSub, setSub: k => updateTabState({ watchActive: k }),
+                  subOrder: watchOrder, onOrderChange: watch => updateTabState({ watch }),
                 }))
               : tab === 'mine'
                 ? h(PanelBoundary, null, h(MineTab, {
                     t, rows: sortedRows, totals, loggedIn, editing, setEditing,
-                    onSaveEdit: saveEdit, onRemoveAsk, onToWatch: toWatch,
+                    onSaveEdit: saveEdit, onRemoveAsk, onAddWatch: addToWatch,
                     onOpenDetail: openDetail, marketQuotes,
                     onTradeAsk, trade, setTrade, onTradeConfirm,
                     sortBy, setSortBy,
                     form, setForm, searchQ, setSearchQ, suggest, onSaveForm: saveForm, saving,
                     importOpen, setImportOpen, importText, setImportText, onImport: doImport, msg,
-                    onRefresh: () => setRefreshKey(k => k + 1), onGoWatch: () => setTab('watch'),
+                    onRefresh: () => setRefreshKey(k => k + 1), onGoWatch: () => updateTabState({ activeMain: 'watch' }),
                   }))
                 : h(PanelBoundary, null, h(FundSettings, null)),
         ),

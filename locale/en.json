@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Fund assistant",
+    "description": "Shows a floating fund button on the right edge of the window; click it to open the fund panel. Add funds with code, shares and cost, or paste holdings text from Alipay, WeChat or Huaxia Fund to import them. It fetches live NAV estimates and tracks today's change, today's P/L and total holding returns without taking space in the chat page. Holdings are stored locally in a SQLite file on this machine, isolated per signed-in DSH account.",
+    "detail": "docs/DETAIL.md"
+  }
+}

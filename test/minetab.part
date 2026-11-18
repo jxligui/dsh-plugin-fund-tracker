@@ -1,0 +1,186 @@
+    function WatchTab({ t, idxQuotes, idxConfig, onSaveSelection, rows, editing, setEditing, onSaveEdit, onRemove, onOpenDetail, saving, form, setForm }) {
+      const selected = idxConfig.selected || [];
+      const removeIdx = code => onSaveSelection(selected.filter(c => c !== code), () => {});
+      const watchRows = rows.filter(r => r.hold.shares == null && r.hold.cost == null)
+        .sort((a, b) => (b.changePct ?? -Infinity) - (a.changePct ?? -Infinity));
+      return h(React.Fragment, null,
+        h('div', { className: 'ft-section' },
+          h('div', { className: 'ft-section-title' }, `${t('indices')}（${selected.length}）`),
+          selected.length === 0
+            ? h('div', { className: 'ft-empty' }, t('watchIdxEmpty'))
+            : h('div', { className: 'ft-idx-grid' },
+                selected.map(code => {
+                  const q = idxQuotes[code];
+                  const meta = (idxConfig.library || []).find(x => x.code === code);
+                  return h('div', { className: 'ft-idx-cell', key: code },
+                    h('div', { className: 'ft-idx-name', title: (meta && meta.name) || code }, (meta && meta.name) || code),
+                    h('div', { className: 'ft-code' }, code),
+                    h('div', { className: 'ft-idx-price' }, money(q ? q.price : null)),
+                    h('div', { className: 'ft-idx-pct' }, h(ChangeBadge, { v: q ? q.changePct : null })),
+                    h('button', {
+                      className: 'ft-act', 'aria-label': `${t('remove')} ${(meta && meta.name) || code}`,
+                      onClick: () => removeIdx(code),
+                    }, `✕ ${t('remove')}`),
+                  );
+                }),
+              ),
+        ),
+        h('div', { className: 'ft-section' },
+          h('div', { className: 'ft-section-title' }, `${t('tabWatch')}（${watchRows.length}）`),
+          watchRows.length === 0
+            ? h('div', { className: 'ft-empty' }, t('watchEmpty'))
+            : h('table', { className: 'ft-table' },
+                h('thead', null, h('tr', null,
+                  h('th', null, t('panel')), h('th', null, t('nav')), h('th', null, t('today')), h('th', null, ''),
+                )),
+                h('tbody', null, watchRows.map(r => editing === r.hold.code
+                  ? h('tr', { key: r.hold.code }, h('td', { colSpan: 4 },
+                      h('div', { className: 'ft-actions', style: { marginTop: 2 } },
+                        h('span', { className: 'ft-code' }, r.hold.code),
+                        h('input', { className: 'ft-input ft-input-sm', placeholder: t('shares'), inputMode: 'decimal', value: form.shares, onChange: e => setForm({ ...form, shares: e.target.value }) }),
+                        h('input', { className: 'ft-input ft-input-sm', placeholder: t('cost'), inputMode: 'decimal', value: form.cost, onChange: e => setForm({ ...form, cost: e.target.value }) }),
+                        h('button', { className: 'ft-btn', disabled: saving, onClick: () => onSaveEdit(r.hold.code) }, t('add')),
+                        h('button', { className: 'ft-btn', onClick: () => setEditing(null) }, t('cancel')),
+                      ),
+                    ))
+                  : h('tr', { key: r.hold.code, className: 'ft-row', onClick: () => onOpenDetail(r.hold) },
+                      h('td', null,
+                        (r.q && r.q.name) || r.hold.name || r.hold.code, ' ',
+                        h('span', { className: 'ft-code' }, r.hold.code),
+                      ),
+                      h('td', null, money(r.nav)),
+                      h('td', null, h(ChangeBadge, { v: r.changePct })),
+                      h('td', { onClick: e => e.stopPropagation() },
+                        h('button', { className: 'ft-act', title: t('toHold'), onClick: () => { setEditing(r.hold.code); setForm({ shares: '', cost: '', code: r.hold.code }); } }, '✎ ', t('toHold')),
+                        h('button', { className: 'ft-del', title: t('remove'), 'aria-label': `${t('remove')} ${r.hold.code}`, onClick: () => onRemove(r.hold.code) }, '✕'),
+                      ),
+                    ))),
+              ),
+        ),
+      );
+    }
+
+    function MineTab({ t, rows, totals, editing, setEditing, onSaveEdit, onRemove, onToWatch, onOpenDetail, sortBy, setSortBy,
+                       form, setForm, searchQ, setSearchQ, suggest, onSaveForm, saving,
+                       importOpen, setImportOpen, importText, setImportText, onImport, msg, onRefresh }) {
+      const positions = rows.filter(r => r.hold.shares != null || r.hold.cost != null);
+      const editingRow = rows.find(r => editing === r.hold.code);
+
+      const editInputs = code => h('div', { className: 'ft-actions', style: { marginTop: 2 } },
+        h('span', { className: 'ft-code' }, code),
+        h('input', {
+          className: 'ft-input ft-input-sm', placeholder: t('shares'), inputMode: 'decimal',
+          value: form.shares, onChange: e => setForm({ ...form, shares: e.target.value }),
+        }),
+        h('input', {
+          className: 'ft-input ft-input-sm', placeholder: t('cost'), inputMode: 'decimal',
+          value: form.cost, onChange: e => setForm({ ...form, cost: e.target.value }),
+        }),
+        h('button', { className: 'ft-btn', disabled: saving, onClick: () => onSaveEdit(code) }, t('add')),
+        h('button', { className: 'ft-btn', onClick: () => setEditing(null) }, t('cancel')),
+      );
+
+      const startEdit = r => {
+        setEditing(r.hold.code);
+        setForm({
+          shares: r.hold.shares == null ? '' : String(r.hold.shares),
+          cost: r.hold.cost == null ? '' : String(r.hold.cost),
+          code: r.hold.code,
+        });
+      };
+
+      return h(React.Fragment, null,
+        positions.length > 0 && h('div', { className: 'ft-overview' },
+          h('div', { className: 'ft-ov-cell' },
+            h('div', { className: 'ft-ov-label' }, t('totalAsset')),
+            h('div', { className: 'ft-ov-value' }, money(totals.amount)),
+          ),
+          h('div', { className: 'ft-ov-cell' },
+            h('div', { className: 'ft-ov-label' }, t('todayProfit')),
+            h('div', { className: 'ft-ov-value', style: { color: signColor(totals.today) } }, money(totals.today)),
+          ),
+          h('div', { className: 'ft-ov-cell' },
+            h('div', { className: 'ft-ov-label' }, t('totalProfit')),
+            h('div', { className: 'ft-ov-value', style: { color: signColor(totals.profit) } }, money(totals.profit)),
+          ),
+          h('div', { className: 'ft-ov-cell' },
+            h('div', { className: 'ft-ov-label' }, t('totalPct')),
+            h('div', { className: 'ft-ov-value', style: { color: signColor(totals.profit) } }, pct(totals.pct)),
+          ),
+        ),
+        editingRow && h('div', { className: 'ft-actions', style: { marginTop: 2 } },
+          editInputs(editingRow.hold.code)),
+        positions.length === 0
+          ? h('div', { className: 'ft-empty' }, t('empty'))
+          : h(React.Fragment, null,
+              h('div', { className: 'ft-actions', style: { marginTop: 2 } },
+                h('span', null, `${t('sortBy')}:`),
+                h('select', { className: 'ft-select', value: sortBy, onChange: e => setSortBy(e.target.value), 'aria-label': t('sortBy') },
+                  h('option', { value: 'today' }, t('sortToday')),
+                  h('option', { value: 'profit' }, t('sortProfit')),
+                  h('option', { value: 'amount' }, t('sortAmount')),
+                ),
+              ),
+              h('table', { className: 'ft-table' },
+                h('thead', null, h('tr', null,
+                  h('th', null, t('panel')), h('th', null, t('nav')), h('th', null, t('today')),
+                  h('th', null, t('holdAmount')), h('th', null, t('todayProfit')),
+                  h('th', null, t('totalProfit')), h('th', null, t('totalPct')), h('th', null, ''),
+                )),
+                h('tbody', null, positions.map(r => h('tr', { key: r.hold.code, className: 'ft-row', onClick: () => onOpenDetail(r.hold) },
+                  h('td', null, (r.q && r.q.name) || r.hold.name || r.hold.code, ' ', h('span', { className: 'ft-code' }, r.hold.code)),
+                  h('td', null, money(r.nav)),
+                  h('td', null, h(ChangeBadge, { v: r.changePct })),
+                  h('td', null, money(r.amount)),
+                  h('td', { style: { color: signColor(r.todayProfit) } }, money(r.todayProfit)),
+                  h('td', { style: { color: signColor(r.totalProfit) } }, money(r.totalProfit)),
+                  h('td', { style: { color: signColor(r.totalProfit) } }, pct(r.totalPct)),
+                  h('td', { onClick: e => e.stopPropagation() },
+                    h('button', { className: 'ft-act', title: t('edit'), onClick: () => startEdit(r) }, '✎'),
+                    h('button', { className: 'ft-act', title: t('toWatch'), onClick: () => onToWatch(r.hold) }, '☆'),
+                    h('button', { className: 'ft-del', title: t('remove'), 'aria-label': `${t('remove')} ${r.hold.code}`, onClick: () => onRemove(r.hold.code) }, '✕'),
+                  ),
+                ))),
+              ),
+            ),
+        h('div', { className: 'ft-actions ft-suggest' },
+          h('span', null, t('addTitle'), '：'),
+          h('input', {
+            className: 'ft-input', placeholder: t('code'),
+            value: searchQ, onChange: e => setSearchQ(e.target.value),
+          }),
+          suggest.length > 0 && h('div', { className: 'ft-suggest-list' },
+            suggest.map(s => h('div', {
+              key: s.code, className: 'ft-suggest-item',
+              onClick: () => { setForm({ code: s.code, shares: '', cost: '' }); setSearchQ(`${s.code} ${s.name}`); setSuggest([]); },
+            },
+              h('span', { className: 'ft-code' }, s.code),
+              h('span', null, s.name),
+              h('span', { className: 'ft-suggest-type' }, s.type),
+            )),
+          ),
+          h('input', {
+            className: 'ft-input ft-input-sm', placeholder: `${t('shares')}（${t('watch')}）`, inputMode: 'decimal',
+            value: form.shares, onChange: e => setForm({ ...form, shares: e.target.value }),
+          }),
+          h('input', {
+            className: 'ft-input ft-input-sm', placeholder: t('cost'), inputMode: 'decimal',
+            value: form.cost, onChange: e => setForm({ ...form, cost: e.target.value }),
+          }),
+          h('button', { className: 'ft-btn', disabled: saving, onClick: onSaveForm }, t('add')),
+          h('button', { className: 'ft-btn', onClick: onRefresh }, t('refresh')),
+          h('button', { className: 'ft-btn', onClick: () => setImportOpen(o => !o) },
+            (importOpen ? '▾ ' : '▸ ') + t('importTitle').split('（')[0].split(' (')[0]),
+        ),
+        importOpen && h(React.Fragment, null,
+          h('div', { className: 'ft-msg' }, t('importTitle')),
+          h('textarea', {
+            className: 'ft-textarea', value: importText,
+            onChange: e => setImportText(e.target.value),
+            placeholder: '华夏成长混合 000021\n持有金额 1,234.56\n…',
+          }),
+          h('button', { className: 'ft-btn', style: { marginTop: 6 }, disabled: saving, onClick: onImport }, t('import')),
+        ),
+        msg && h('div', { className: `ft-msg${msg.kind === 'err' ? ' ft-err' : ''}` }, msg.text),
+      );
+    }

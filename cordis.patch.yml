@@ -1,0 +1,4 @@
+- insert:
+    - id: fund-tracker
+      name: '@local/fund-tracker'
+      config: {}

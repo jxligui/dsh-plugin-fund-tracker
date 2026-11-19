@@ -690,6 +690,15 @@ window.__ModuleLoader__.load({
 .ft-suggest-item{width:100%;background:none;border:none;font:inherit;color:inherit;text-align:left;}
 .ft-root :focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px;border-radius:4px;}
 @media (max-width:720px){ .ft-card-meta{grid-template-columns:repeat(3,1fr)} }
+/* v2.5.4 motion & feel polish */
+@keyframes ft-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.ft-panel{animation:ft-in .18s ease-out;}
+.ft-modal{animation:ft-in .16s ease-out;}
+.ft-btn,.ft-act,.ft-del,.ft-tab,.ft-pick,.ft-seg-btn,.ft-group-tab,.ft-close,.ft-more,.ft-idx-icon-btn,.ft-link,.ft-group-mgr{transition:color .15s ease,background-color .15s ease,border-color .15s ease,filter .15s ease;}
+.ft-card,.ft-idx-card,.ft-table tbody tr{transition:background-color .15s ease,border-color .15s ease,box-shadow .15s ease;}
+.ft-idx-card:hover{border-color:var(--dsw-alias-border-l2);box-shadow:0 4px 14px rgba(0,0,0,.08);}
+.ft-card:not(.ft-card-open):hover{border-color:var(--dsw-alias-border-l2);}
+@media (prefers-reduced-motion:reduce){.ft-panel,.ft-modal{animation:none;}}
 `;
 
     function useQuotes(codes, refreshKey) {
@@ -1044,7 +1053,7 @@ window.__ModuleLoader__.load({
             ? h('div', { className: 'ft-empty ft-err' }, data.error)
             : h('table', { className: 'ft-table' },
                 h('thead', null, h('tr', null,
-                  h('th', null, t('panel')), h('th', null, t('sector')), h('th', null, t('prevClose')), h('th', null, t('nav')),
+                  h('th', null, t('open')), h('th', null, t('sector')), h('th', null, t('prevClose')), h('th', null, t('nav')),
                   h('th', null, t('chg')), h('th', null, t('yesterday')), h('th', null, ''),
                 )),
                 h('tbody', null, list.map(item => {
@@ -1326,7 +1335,7 @@ window.__ModuleLoader__.load({
             ? h('div', { className: 'ft-empty' }, t('watchEmpty'))
             : h('table', { className: 'ft-table' },
                 h('thead', null, h('tr', null,
-                  h('th', null, t('panel')), h('th', null, t('sector')), h('th', null, t('nav')), h('th', null, t('yesterday')), h('th', null, ''),
+                  h('th', null, t('open')), h('th', null, t('sector')), h('th', null, t('nav')), h('th', null, t('yesterday')), h('th', null, ''),
                 )),
                 h('tbody', null, watchRows.map(r => {
                   const isHeld = r.hold.shares != null || r.pending != null;
@@ -2396,9 +2405,9 @@ window.__ModuleLoader__.load({
             h('span', { className: 'ft-bar-title' }, '📈 ', t('panel')),
             h('span', { className: 'ft-bar-sum' },
               holdings.length > 0 && h(React.Fragment, null,
-                h('span', null, t('totalAsset'), ' ', money(totals.amount)),
-                h('span', { style: { color: signColor(totals.today) } }, money(totals.today)),
-                h('span', { style: { color: signColor(totals.profit) } }, pct(totals.pct)),
+                h('span', { className: 'ft-num', title: t('totalAsset') }, t('totalAsset'), ' ', money(totals.amount)),
+                h('span', { className: 'ft-num', title: t('todayProfit'), style: { color: signColor(totals.today) } }, signedMoney(totals.today)),
+                h('span', { className: 'ft-num', title: t('totalPct'), style: { color: signColor(totals.profit) } }, pct(totals.pct)),
               ),
               h('button', {
                 className: 'ft-close', 'aria-label': t('close'), title: t('close'),

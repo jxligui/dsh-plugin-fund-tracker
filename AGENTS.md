@@ -24,6 +24,13 @@ node -e "import('./lib/store.js').then(async m => { const db = m.openDb(); conso
 
 ## 坑
 
+- **外观打磨（v2.5.4）**：行情 / 自选基金表第一列表头从误用的 `t('panel')`（面板名）
+  改为 `t('open')`（基金）；标题栏汇总 今日盈亏用 `signedMoney` 带符号、数值加 `ft-num`
+  与 title 提示；面板 / 弹窗加 `ft-in` 入场动画（`prefers-reduced-motion` 关闭），
+  按钮 / 卡片 / 表格行加 0.15s 颜色过渡，指数卡片与持仓卡片 hover 提亮边框与阴影
+  （`.ft-card:not(.ft-card-open):hover` 避免覆盖展开态的品牌色边框）。
+- **批量导入逗号分隔修复**：`parseBatch()` 用「先定位 6 位代码、再取其后第一个数字」的
+  两段式正则，因此 `161725, 500.50` 这类逗号分隔也能解析（此前按整行 split 失败）。
 - **测试读写真实的用户数据库。** `store.js#dbPath()` 固定使用
   `~/.dsh/fund-tracker/fund-tracker.db`，完全忽略 `DSH_PROFILE_DIR` 与
   `FT_TEST_PROFILE`（测试文件里虽然还在设置它们）。断言依赖真实基础库
@@ -34,8 +41,8 @@ node -e "import('./lib/store.js').then(async m => { const db = m.openDb(); conso
 - **基础库表只在 `count < <常量>.length` 时于 `openDb()` 补齐。** 往
   `INDEX_LIBRARY` / `ETF_LIBRARY`（`lib/constants.js`）里加条目能进入已有数据库；
   删条目则会在旧库里留下残行。`indexlist` 测试断言恰好 **29** 条指数。
-- `seedDemoHoldings()` 会在某个账号首次 `action=list` 时写入 10 条假持仓
-  （按账号用 `meta` 去重）。
+- `seedDemoHoldings()` 会在某个账号首次 `action=list` 时写入演示数据
+  （6 持仓 + 4 自选，见 v2.3.6；按账号用 `meta` 去重）。
 - **自选不再是「份额为空」。** `holdings.watch` 才是自选标记；旧库在 `openDb()`
   里按 `shares IS NULL AND cost IS NULL` 补齐。`action=watch` 只改标记，不动份额；
   `save` 省略 `watch` 时保留原值。
@@ -61,6 +68,8 @@ node -e "import('./lib/store.js').then(async m => { const db = m.openDb(); conso
   `fund_nav`，20 小时节流。`fundlist` / `fundtypes` 默认 `status=onsale`，
   `status=all` 才返回暂停申购的基金；设置页「今日行情 · 基金状态」可切换
   （localStorage `fund-tracker.fund-status.v1`，CustomEvent `ft-fund-status-changed`）。
+  设置页「立即更新」（`action=refreshlib`，需登录）一次跑满三件：
+  `refreshLibrary(db, true)` 强刷基础库 + `syncEtfLibrary` + `syncOnSale`（强制、绕过 20h 节流）。
 - **SQLite 并发**：`openDb()` 开 `journal_mode=WAL` + `busy_timeout=5000`；
   宿主与后台同步共用库文件，缺这两条会随机报 `database is locked`。
 - 东方财富接口需要 `referer` 头；**`fundgz.1234567.com.cn` 已失效（返回 404 HTML）**，

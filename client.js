@@ -10,8 +10,9 @@ window.__ModuleLoader__.load({
     const INTERVAL_OPTIONS = [15, 30, 60, 120, 300];
     // Codes currently being settled from "pending amount" to shares (guards the
     // effect against re-entering while its own save is in flight).
-    const settleLocks = new Set();
     const TAB_ORDER_KEY = 'fund-tracker.tab-order.v1';
+    const FUND_STATUS_KEY = 'fund-tracker.fund-status.v1'; // 'onsale' (default) | 'all'
+    const GROUP_ACTIVE_KEY = 'fund-tracker.active-group.v1'; // selected holdings group name or '__all__'
     const MAIN_TABS = ['market', 'watch', 'mine', 'settings'];
     const MARKET_SUBS = ['index', 'fund', 'etf'];
     const WATCH_SUBS = ['index', 'fund'];
@@ -85,7 +86,7 @@ window.__ModuleLoader__.load({
         panel: '基金小助理',
         tabMarket: '今日行情',
         tabWatchPage: '我的自选',
-        tabMine: '我的基金',
+        tabMine: '持仓基金',
         tabSettings: '设置',
         watchIdxEmpty: '暂未关注指数。在「今日行情 → 指数 → 编辑指数」中勾选即可。',
         loginMaskTitle: '持仓金额已隐藏',
@@ -106,9 +107,11 @@ window.__ModuleLoader__.load({
         close: '收起',
         refresh: '刷新',
         refreshing: '加载中…',
-        empty: '暂无基金。搜索代码/名称/拼音添加，或粘贴支付宝 / 微信 / 华夏基金的持仓文本导入。',
+        empty: '暂无基金。搜索代码/名称/拼音添加，或用「批量导入」按「基金代码 金额」添加。',
         addTitle: '搜索添加（代码 / 名称 / 拼音）',
-        importTitle: '粘贴导入（支付宝 / 微信 / 华夏基金持仓文本）',
+        importTitle: '批量导入（基金代码 + 金额）',
+        batchImportTitle: '批量导入（基金代码 + 金额）',
+        batchImportHint: '每行一只：基金代码 空格 金额，自动按最新净值折算份额与成本',
         code: '代码',
         shares: '持有份额',
         cost: '持仓成本价',
@@ -143,11 +146,17 @@ window.__ModuleLoader__.load({
         latestNav: '最新净值',
         loadingDetail: '加载详情…',
         detailFail: '详情加载失败',
-        lockTitle: '「我的基金」已锁定',
+        lockTitle: '「持仓基金」已锁定',
         lockHint: '个人持仓涉及隐私，请先在 DSH 界面登录账号后再查看。行情页仍可正常浏览。',
         refreshInterval: '刷新间隔',
         seconds: (s) => `${s} 秒`,
         libLabel: '证券基础数据库',
+        fundStatusTitle: '今日行情 · 基金状态',
+        fundStatusOnSale: '在售基金',
+        fundStatusAll: '全部基金',
+        fundStatusOnSaleHint: '默认：仅显示开放申购的基金（约 2 万只）',
+        fundStatusAllHint: '显示全部基金，含暂停申购 / 封闭期（约 2.8 万只）',
+        navSyncStatus: (n, total, doneAt) => `净值库：已存 ${n.toLocaleString('zh-CN')} / ${total.toLocaleString('zh-CN')} 只基金${doneAt ? ` · 全量完成于 ${doneAt}` : ' · 全量同步进行中'}`,
         etfLibLabel: 'ETF 基础库',
         etfCount: n => `${n} 只 ETF · 按主题分类`,
         etfSync: '同步内置清单',
@@ -163,6 +172,10 @@ window.__ModuleLoader__.load({
         mktTitle: '今日行情',
         subIdx: '指数',
         subFund: '基金',
+        marketSubIdx: '大盘指数',
+        marketSubFund: '全部基金',
+        watchSubIdx: '自选大盘指数',
+        watchSubFund: '自选基金',
         subEtf: 'ETF 基金',
         price: '现价',
         pageOf: (p, n) => `第 ${p} / ${n} 页`,
@@ -176,11 +189,19 @@ window.__ModuleLoader__.load({
         tabWatch: '自选',
         toWatch: '加入我的自选',
         toHold: '加入持仓',
+        unwatch: '取消自选',
+        toHoldAmountPh: '输入金额（元）',
+        toHoldNavHint: nav => `按净值 ${money(nav)} 折算份额，成本价为该净值`,
+        toHoldDone: (n, nav) => `已按净值 ${money(nav)} 折算 ${Number((n / nav).toFixed(2))} 份加入持仓`,
         inWatch: '已在自选',
         prevNav: '昨日净值',
         usePrevNav: '按昨日净值',
         watchEmpty: '暂无自选基金。在行情页或下方搜索点「＋ 加自选」即可关注。',
         prevClose: '昨收',
+        todayOpen: '今开',
+        high: '最高',
+        low: '最低',
+        turnover: '成交额',
         chg: '涨跌额',
         filterType: '类型',
         allTypes: '全部类型',
@@ -199,9 +220,26 @@ window.__ModuleLoader__.load({
         selectedFund: '已选择',
         addHint: '输入 6 位代码或名称搜索',
         optionalWatch: '仅自选可留空',
-        importShort: '粘贴导入',
+        importShort: '批量导入',
         watchRemain: n => `还有 ${n} 只自选`,
         holdCount: n => `持仓 ${n} 只`,
+        groupAll: '全部',
+        groupNone: '未分组',
+        groupNoneShort: '未分组',
+        groupManage: '管理分组',
+        groupMgrTitle: '自定义分组',
+        groupNamePh: '新分组名称',
+        groupAdd: '新增',
+        groupRename: '改名',
+        groupMove: '移到分组',
+        groupMgrHint: '分组按账号保存在本机；删除分组后其中的基金变为「未分组」，不会删除基金。',
+        groupBatchAssign: '批量分配',
+        groupCheckAll: '全选',
+        groupUncheckAll: '全不选',
+        groupSelectTarget: '选择目标分组',
+        groupBatchDo: '分配到组',
+        groupBatchDone: n => `已将 ${n} 只基金分配到该组`,
+        groupNoneEmpty: '没有未分组的基金，所有基金都已归类。',
         costShort: '成本',
         sharesShort: '份额',
         amountShort: '金额（元）',
@@ -209,12 +247,21 @@ window.__ModuleLoader__.load({
         pendingCalc: '待确认',
         pendingHint: '未取到净值，已记为待确认；第二天取到净值后自动折算份额并保存',
         amountRule: '金额 ÷ 净值 = 份额',
+        addAmountPh: '例如 1000',
+        addAmountHint: '填金额即按最新净值自动折算份额与成本；份额、成本可留空',
+        optionalAdvanced: '选填（一般不填）',
+        batchImportBtn: '导入',
+        batchImportFail: '未解析到「基金代码 + 金额」行，请检查格式（如 000001 1000）',
+        batchImportDone: (n, f, imported, pending) => `解析 ${n} 只（新增 ${f}）：折算份额 ${imported} 只${pending ? `，待确认 ${pending} 只` : ''}`,
+        tradeRule: '只需填金额：份额按确认日净值自动折算（普通基金 T+1，QDII T+2），确认前金额已计入持仓金额',
+        estShares: n => `预估 ${n} 份（以确认日净值为准）`,
+        tradeRecorded: '已记录交易，确认日后自动折算份额',
       },
       'en-US': {
         panel: 'Fund assistant',
         tabMarket: "Today's market",
         tabWatchPage: 'Watchlist',
-        tabMine: 'My funds',
+        tabMine: 'Holdings',
         tabSettings: 'Settings',
         watchIdxEmpty: 'No watched indices yet. Pick some in Today market, Indices, Edit.',
         loginMaskTitle: 'Amounts hidden',
@@ -235,9 +282,11 @@ window.__ModuleLoader__.load({
         close: 'Collapse',
         refresh: 'Refresh',
         refreshing: 'Loading…',
-        empty: 'No funds yet. Search by code, name or pinyin abbreviation to add, or paste holdings text from Alipay / WeChat / Huaxia Fund to import.',
+        empty: 'No funds yet. Search by code/name/pinyin to add, or use "Batch import" with "code amount" lines.',
         addTitle: 'Search to add (code / name / pinyin)',
-        importTitle: 'Paste import (Alipay / WeChat / Huaxia holdings text)',
+        importTitle: 'Batch import (code + amount)',
+        batchImportTitle: 'Batch import (code + amount)',
+        batchImportHint: 'One fund per line: code, space, amount — shares/cost computed at latest NAV',
         code: 'Code',
         shares: 'Shares',
         cost: 'Cost per share',
@@ -277,6 +326,12 @@ window.__ModuleLoader__.load({
         refreshInterval: 'Refresh',
         seconds: (s) => `${s}s`,
         libLabel: 'Securities master database',
+        fundStatusTitle: 'Market · fund status',
+        fundStatusOnSale: 'On sale',
+        fundStatusAll: 'All funds',
+        fundStatusOnSaleHint: 'Default: only funds open for purchase (~20k)',
+        fundStatusAllHint: 'All funds incl. suspended / closed-end (~28k)',
+        navSyncStatus: (n, total, doneAt) => `NAV store: ${n.toLocaleString('en-US')} / ${total.toLocaleString('en-US')} funds${doneAt ? ` · full pass at ${doneAt}` : ' · full sync in progress'}`,
         etfLibLabel: 'ETF library',
         etfCount: n => `${n} ETFs, grouped by theme`,
         etfSync: 'Sync built-in list',
@@ -292,6 +347,10 @@ window.__ModuleLoader__.load({
         mktTitle: "Today's market",
         subIdx: 'Indices',
         subFund: 'Funds',
+        marketSubIdx: 'Major indices',
+        marketSubFund: 'All funds',
+        watchSubIdx: 'Watched major indices',
+        watchSubFund: 'Watched funds',
         subEtf: 'ETF funds',
         price: 'Price',
         pageOf: (p, n) => `Page ${p} / ${n}`,
@@ -305,11 +364,19 @@ window.__ModuleLoader__.load({
         tabWatch: 'Watchlist',
         toWatch: 'Add to watchlist',
         toHold: 'Add to holdings',
+        unwatch: 'Unwatch',
+        toHoldAmountPh: 'Amount (CNY)',
+        toHoldNavHint: nav => `Shares computed at NAV ${money(nav)}, cost = that NAV`,
+        toHoldDone: (n, nav) => `Added ${Number((n / nav).toFixed(2))} shares at NAV ${money(nav)}`,
         inWatch: 'In watchlist',
         prevNav: 'Prev NAV',
         usePrevNav: 'Using prev NAV',
         watchEmpty: 'No watchlist items yet. Add from the market tab or search below.',
         prevClose: 'Prev close',
+        todayOpen: 'Open',
+        high: 'High',
+        low: 'Low',
+        turnover: 'Turnover',
         chg: 'Change',
         filterType: 'Type',
         allTypes: 'All types',
@@ -328,9 +395,26 @@ window.__ModuleLoader__.load({
         selectedFund: 'Selected',
         addHint: 'Enter a 6-digit code or search by name',
         optionalWatch: 'Optional for watchlist',
-        importShort: 'Paste import',
+        importShort: 'Batch import',
         watchRemain: n => `${n} more in watchlist`,
         holdCount: n => `${n} holdings`,
+        groupAll: 'All',
+        groupNone: 'Ungrouped',
+        groupNoneShort: 'Ungrouped',
+        groupManage: 'Manage groups',
+        groupMgrTitle: 'Custom groups',
+        groupNamePh: 'New group name',
+        groupAdd: 'Add',
+        groupRename: 'Rename',
+        groupMove: 'Move to group',
+        groupMgrHint: 'Groups are saved locally per account; deleting a group moves its funds to Ungrouped (funds are not deleted).',
+        groupBatchAssign: 'Bulk assign',
+        groupCheckAll: 'Select all',
+        groupUncheckAll: 'Clear',
+        groupSelectTarget: 'Select target group',
+        groupBatchDo: 'Assign',
+        groupBatchDone: n => `Assigned ${n} funds to the group`,
+        groupNoneEmpty: 'No ungrouped funds — everything is assigned.',
         costShort: 'Cost',
         sharesShort: 'Shares',
         amountShort: 'Amount (CNY)',
@@ -338,6 +422,15 @@ window.__ModuleLoader__.load({
         pendingCalc: 'Pending',
         pendingHint: 'No NAV yet, saved as pending — shares are calculated and stored after the next quote',
         amountRule: 'amount ÷ NAV = shares',
+        addAmountPh: 'e.g. 1000',
+        addAmountHint: 'Enter amount to auto-compute shares/cost at latest NAV; shares/cost can be left blank',
+        optionalAdvanced: 'optional (normally blank)',
+        batchImportBtn: 'Import',
+        batchImportFail: 'No "code + amount" lines found. Check format (e.g. 000001 1000)',
+        batchImportDone: (n, f, imported, pending) => `Parsed ${n} (new ${f}): ${imported} converted${pending ? `, ${pending} pending` : ''}`,
+        tradeRule: 'Amount only: shares are computed at the confirmation-day NAV (T+1, QDII T+2); the amount already counts toward your holdings value',
+        estShares: n => `Est. ${n} shares (final shares use the confirmation-day NAV)`,
+        tradeRecorded: 'Trade recorded — shares will be confirmed automatically',
       },
     };
     const currentLocaleRef = { id: 'zh-CN' };
@@ -366,24 +459,24 @@ window.__ModuleLoader__.load({
       } catch { return 60; }
     }
 
-    function parsePasted(text) {
+    // Batch import: one fund per line, "基金代码 金额" (any separator:
+    // space / tab / comma / Chinese comma). Amount may carry ¥ and thousands
+    // separators. Eg: 000001 1000 / 161725, 500.50 / 005827\t2000
+    function parseBatch(text) {
       const found = new Map();
       for (const line of String(text || '').split(/\r?\n/)) {
-        const codeMatch = /(?:^|[^\d])(\d{6})(?=[^\d]|$)/.exec(line);
-        if (!codeMatch) continue;
-        const code = codeMatch[1];
-        const num = re => { const m = re.exec(line); return m ? Number(m[1].replace(/,/g, '')) : null; };
-        const shares = num(/(?:份额|持有数量)[^\d-]*(-?[\d,]+(?:\.\d+)?)/);
-        const cost = num(/成本[^\d-]*(-?[\d,]+(?:\.\d+)?)/);
-        const amount = num(/金额[^\d-]*(-?[\d,]+(?:\.\d+)?)/);
-        const nameMatch = /([\u4e00-\u9fa5A-Za-z0-9*]{2,20})/.exec(line.replace(/[\d,.\-+%/（）()：:|]/g, ' ').trim());
-        const existing = found.get(code) || {};
-        found.set(code, {
-          code,
-          name: existing.name || (nameMatch ? nameMatch[1].trim() : ''),
-          shares: existing.shares ?? shares ?? amount,
-          cost: existing.cost ?? cost,
-        });
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        // Find the 6-digit code, then the first number after it as the amount.
+        const m = /(?:^|[^\d])(\d{6})(?=[^\d]|$)/.exec(trimmed);
+        if (!m) continue;
+        const code = m[1];
+        const rest = trimmed.slice(m.index + m[0].length);
+        const am = /[¥￥]?\s*(-?[\d,]+(?:\.\d+)?)/.exec(rest);
+        const amount = am ? Number(am[1].replace(/,/g, '')) : null;
+        if (amount == null || !isFinite(amount) || amount <= 0) continue;
+        const prev = found.get(code);
+        found.set(code, { code, amount: prev ? prev.amount + amount : amount });
       }
       return [...found.values()];
     }
@@ -405,6 +498,14 @@ window.__ModuleLoader__.load({
       const abs = Math.abs(v).toLocaleString('zh-CN', { minimumFractionDigits: digits, maximumFractionDigits: digits });
       return `${v > 0 ? '+' : v < 0 ? '−' : ''}${abs}`;
     }
+    // Compact amount for index turnover: 亿 / 万.
+    function compactAmt(v) {
+      if (v == null || !isFinite(v)) return '—';
+      const a = Math.abs(v);
+      if (a >= 1e8) return `${(v / 1e8).toFixed(2)}亿`;
+      if (a >= 1e4) return `${(v / 1e4).toFixed(2)}万`;
+      return String(Math.round(v));
+    }
     // fundgz `jzrq` is the date of the latest published NAV; if it is not today,
     // today's NAV is still unpublished and the previous NAV is used for holdings.
     function isTodayNav(dateStr) {
@@ -419,7 +520,9 @@ window.__ModuleLoader__.load({
 .ft-root{position:fixed;right:0;top:38%;z-index:60;font-size:12px;color:var(--dsw-alias-label-primary);}
 .ft-chip{writing-mode:vertical-rl;letter-spacing:3px;padding:14px 5px;border:1px solid var(--dsw-alias-border-l2);border-right:none;border-radius:8px 0 0 8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);cursor:pointer;font:inherit;font-size:12px;box-shadow:-2px 2px 8px rgba(0,0,0,.18);}
 .ft-chip:hover{background:var(--dsw-alias-bg-layer-2);}
-.ft-panel{position:fixed;right:34px;top:20%;z-index:60;width:640px;max-width:calc(100vw - 60px);max-height:72vh;overflow:auto;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:12px;box-shadow:-4px 6px 24px rgba(0,0,0,.22);padding:8px 12px 12px;}
+.ft-panel{position:fixed;right:34px;top:12%;z-index:60;width:640px;max-width:calc(100vw - 60px);height:76vh;max-height:78vh;display:flex;flex-direction:column;overflow:hidden;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:12px;box-shadow:-4px 6px 24px rgba(0,0,0,.22);padding:8px 12px 12px;}
+.ft-panel-body{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:none;}
+.ft-panel-body::-webkit-scrollbar{display:none;}
 .ft-bar{display:flex;align-items:center;gap:8px;width:100%;padding:4px 2px;text-align:left;color:inherit;font:inherit;}
 .ft-bar-title{font-weight:600;white-space:nowrap;}
 .ft-bar-sum{margin-left:auto;display:flex;gap:10px;align-items:center;white-space:nowrap;}
@@ -438,11 +541,23 @@ window.__ModuleLoader__.load({
 .ft-lock-title{font-weight:600;color:var(--dsw-alias-label-primary);margin-bottom:6px;}
 .ft-section{margin-top:8px;}
 .ft-section-title{color:var(--dsw-alias-label-secondary);font-weight:600;margin:6px 0 4px;}
-.ft-idx-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;}
-.ft-idx-cell{background:var(--dsw-alias-bg-layer-2);border-radius:8px;padding:6px 8px;text-align:center;}
+.ft-idx-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}
+/* fund-app style index card */
+.ft-idx-card{position:relative;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1);border-radius:14px;padding:12px 14px;box-shadow:0 2px 10px rgba(0,0,0,.05);}
+.ft-idx-card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:6px;}
+.ft-idx-card-title{min-width:0;}
+.ft-idx-card-name{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ft-idx-card-meta{font-size:10px;color:var(--dsw-alias-label-secondary);margin-top:2px;}
+.ft-idx-icon-btn{flex-shrink:0;border:none;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);width:24px;height:24px;border-radius:50%;cursor:pointer;font-size:13px;line-height:1;}
+.ft-idx-icon-btn:hover{color:var(--dsw-alias-brand-primary);}
+.ft-idx-icon-on{color:var(--dsw-alias-brand-primary);}
+.ft-idx-card-price{display:flex;align-items:baseline;gap:8px;margin-top:8px;}
+.ft-idx-card-num{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.5px;color:var(--dsw-alias-label-primary);}
+.ft-idx-card-pct{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums;padding:2px 8px;border-radius:6px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);}
+.ft-idx-up{background:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-bg-base);}
+.ft-idx-down{background:var(--dsw-alias-state-success-primary);color:var(--dsw-alias-bg-base);}
+.ft-idx-card-chg{font-size:11px;font-variant-numeric:tabular-nums;margin-top:2px;color:var(--dsw-alias-label-secondary);}
 .ft-idx-name{color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.ft-idx-price{font-weight:600;}
-.ft-idx-pct{font-weight:600;}
 .ft-table{width:100%;border-collapse:collapse;}
 .ft-table th{color:var(--dsw-alias-label-secondary);font-weight:500;text-align:right;padding:2px 6px;white-space:nowrap;}
 .ft-table th:first-child{text-align:left;}
@@ -483,7 +598,6 @@ window.__ModuleLoader__.load({
 .ft-flag-pending{border-color:var(--dsw-alias-label-secondary);color:var(--dsw-alias-label-secondary);}
 .ft-pager{display:flex;gap:8px;align-items:center;justify-content:center;margin-top:10px;}
 .ft-type{display:inline-block;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-2);border-radius:4px;padding:0 4px;font-size:11px;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:1px;}
-.ft-idx-cell{display:flex;flex-direction:column;gap:2px;align-items:center;}
 .ft-settings{max-width:720px;margin:0 auto;color:var(--dsw-alias-label-primary);font-size:13px;}
 .ft-set-title{font-size:16px;margin:4px 0 16px;}
 .ft-set-block{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:12px 16px;margin-bottom:12px;}
@@ -508,21 +622,43 @@ window.__ModuleLoader__.load({
 .ft-seg-btn:hover{color:var(--dsw-alias-label-primary);}
 .ft-seg-btn-on{background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-brand-primary);font-weight:600;}
 .ft-toolbar .ft-btn:not(.ft-btn-primary){min-height:28px;}
+.ft-groupbar{display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin:0 0 8px;padding:3px;background:var(--dsw-alias-bg-layer-2);border-radius:8px;}
+.ft-group-tab{border:none;background:none;color:var(--dsw-alias-label-secondary);cursor:pointer;padding:4px 9px;border-radius:6px;font:inherit;font-size:11px;min-height:26px;white-space:nowrap;}
+.ft-group-tab:hover{color:var(--dsw-alias-label-primary);}
+.ft-group-tab-on{background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-brand-primary);font-weight:600;}
+.ft-group-mgr{margin-left:auto;border:none;background:none;color:var(--dsw-alias-label-secondary);cursor:pointer;font-size:14px;padding:2px 8px;border-radius:6px;}
+.ft-group-mgr:hover,.ft-group-mgr-on{color:var(--dsw-alias-brand-primary);}
+.ft-group-mgr-panel{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:8px;padding:10px 12px;margin-bottom:10px;}
+.ft-group-mgr-list{display:flex;flex-direction:column;gap:6px;margin-top:8px;}
+.ft-group-mgr-row{display:flex;gap:6px;align-items:center;}
+.ft-group-mgr-row .ft-input{flex:1;min-width:0;}
+.ft-group-batch-list{display:flex;flex-direction:column;gap:2px;margin-top:8px;max-height:180px;overflow:auto;}
+.ft-group-batch-row{display:flex;align-items:center;gap:6px;padding:3px 2px;cursor:pointer;font-size:12px;}
+.ft-group-batch-row:hover{color:var(--dsw-alias-brand-primary);}
+.ft-group-batch-row input[type=checkbox]{accent-color:var(--dsw-alias-brand-primary);}
 .ft-list{list-style:none;margin:0;padding:0;}
-.ft-card{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:8px 10px;margin-bottom:6px;}
+.ft-card{border:1px solid var(--dsw-alias-border-l1);border-radius:8px;padding:5px 8px;margin-bottom:4px;}
 .ft-card:hover{background:var(--dsw-alias-bg-layer-2);}
-.ft-card-main{display:flex;align-items:flex-start;gap:8px;}
-.ft-card-id{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;align-items:flex-start;}
+.ft-card-main{display:flex;align-items:center;gap:8px;min-height:34px;}
+.ft-card-id{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;align-items:flex-start;}
 .ft-name{border:none;background:none;padding:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;font-weight:600;cursor:pointer;border-radius:4px;}
 .ft-name:hover{color:var(--dsw-alias-brand-primary);}
 .ft-sub{display:flex;align-items:center;gap:6px;flex-wrap:wrap;color:var(--dsw-alias-label-secondary);max-width:100%;}
-.ft-card-fig{display:flex;flex-direction:column;align-items:flex-end;gap:2px;text-align:right;flex-shrink:0;}
+.ft-card-fig{display:flex;flex-direction:column;align-items:flex-end;gap:1px;text-align:right;flex-shrink:0;}
 .ft-amount{font-weight:600;font-size:13px;color:var(--dsw-alias-label-primary);}
-.ft-today{color:var(--dsw-alias-label-secondary);}
-.ft-more{flex-shrink:0;display:inline-flex;align-items:center;gap:3px;min-height:30px;padding:0 10px;border:1px solid var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-brand-primary);border-radius:8px;cursor:pointer;font:inherit;font-size:11px;font-weight:600;white-space:nowrap;}
-.ft-more:hover{background:var(--dsw-alias-bg-layer-1);}
+.ft-today{color:var(--dsw-alias-label-secondary);font-size:11px;}
+.ft-more{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;min-height:24px;width:24px;padding:0;border:1px solid var(--dsw-alias-border-l2);background:none;color:var(--dsw-alias-label-secondary);border-radius:6px;cursor:pointer;font:inherit;font-size:11px;}
+.ft-more:hover{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary);}
 .ft-more-on{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-bg-base);}
-.ft-card-meta{display:grid;grid-template-columns:repeat(5,minmax(0,1fr)) auto;gap:4px 8px;margin-top:6px;align-items:end;}
+/* compact inline metrics row (default view) */
+.ft-card-stats{display:flex;gap:12px;flex-wrap:wrap;margin-top:4px;padding-left:2px;font-size:11px;color:var(--dsw-alias-label-secondary);}
+.ft-card-stats .ft-stat{white-space:nowrap;}
+.ft-card-stats b{color:var(--dsw-alias-label-primary);font-weight:600;font-variant-numeric:tabular-nums;}
+.ft-card.ft-card-open .ft-card-stats{display:none;}
+/* secondary metrics only shown on the expanded card */
+.ft-card .ft-card-meta{display:none;}
+.ft-card.ft-card-open .ft-card-meta{display:grid;}
+.ft-card-meta{display:grid;grid-template-columns:repeat(5,minmax(0,1fr)) auto;gap:4px 8px;margin-top:6px;align-items:end;padding-top:6px;border-top:1px solid var(--dsw-alias-border-l1);}
 .ft-meta-cell{display:flex;flex-direction:column;gap:1px;min-width:0;}
 .ft-meta-label{color:var(--dsw-alias-label-secondary);font-size:11px;}
 .ft-meta-value{color:var(--dsw-alias-label-primary);}
@@ -729,9 +865,40 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // Shared index card for "大盘指数" and "自选大盘指数" — identical look.
+    // Compact: name + code/price + change% + change amount + star toggle.
+    // `watched` is conveyed by a filled ★ only (no "已在自选" label).
+    function IdxCard({ t, idx, q, watched, onWatch, onRemove }) {
+      const up = q && q.changePct != null && q.changePct > 0;
+      const tone = q && q.changePct != null && q.changePct !== 0 ? signColor(q.changePct) : null;
+      return h('div', { className: 'ft-idx-card', key: idx.code },
+        h('div', { className: 'ft-idx-card-top' },
+          h('div', { className: 'ft-idx-card-title' },
+            h('div', { className: 'ft-idx-card-name', title: idx.name }, idx.name),
+            h('div', { className: 'ft-idx-card-meta' }, idx.code, idx.category ? ` · ${idx.category}` : ''),
+          ),
+          onRemove
+            ? h('button', { className: 'ft-idx-icon-btn', onClick: onRemove, 'aria-label': `${t('unwatch')} ${idx.name}`, title: t('unwatch') }, '✕')
+            : h('button', {
+                className: `ft-idx-icon-btn${watched ? ' ft-idx-icon-on' : ''}`, disabled: watched,
+                onClick: () => onWatch({ code: idx.code, name: idx.name }),
+                'aria-label': `${t('watch')} ${idx.name}`, title: watched ? t('inWatch') : t('watch'),
+              }, watched ? '★' : '☆'),
+        ),
+        h('div', { className: 'ft-idx-card-price' },
+          h('span', { className: 'ft-idx-card-num', style: tone ? { color: tone } : null }, money(q ? q.price : null)),
+          h('span', {
+            className: `ft-idx-card-pct${up ? ' ft-idx-up' : q && q.changePct < 0 ? ' ft-idx-down' : ''}`,
+          }, pct(q ? q.changePct : null)),
+        ),
+        h('div', { className: 'ft-idx-card-chg', style: tone ? { color: tone } : null }, `${t('chg')} ${signedMoney(q && q.changeAmt)}`),
+      );
+    }
+
     function IndexSub({ t, idxQuotes, idxConfig, onSaveSelection, holdingsCodes, onWatch, refreshKey }) {
       const [page, setPage] = useState(1);
-      const size = 12;
+      // Paginated: 2 cards per row (grid), 10 per page (5 rows, fits without scrolling).
+      const size = 10;
       const [data, setData] = useState({ items: [], total: 0 });
       useEffect(() => {
         let alive = true;
@@ -788,21 +955,10 @@ window.__ModuleLoader__.load({
         data.items.length === 0
           ? h('div', { className: `ft-empty${data.error ? ' ft-err' : ''}` }, data.error || t('refreshing'))
           : h('div', { className: 'ft-idx-grid' },
-              data.items.map(idx => {
-                const q = idxQuotes[idx.code];
-                const watched = holdingsCodes.includes(idx.code);
-                return h('div', { className: 'ft-idx-cell', key: idx.code },
-                  h('div', { className: 'ft-idx-name', title: idx.name }, idx.name),
-                  h('div', { className: 'ft-code' }, idx.code, ' · ', idx.category || ''),
-                  h('div', { className: 'ft-idx-price' }, money(q ? q.price : null)),
-                  h('div', { className: 'ft-idx-pct' }, h(ChangeBadge, { v: q ? q.changePct : null })),
-                  h('button', {
-                    className: 'ft-act', disabled: watched,
-                    onClick: () => onWatch({ code: idx.code, name: idx.name }),
-                    'aria-label': `${t('watch')} ${idx.name}`,
-                  }, watched ? '✓' : `＋ ${t('watch')}`),
-                );
-              }),
+              data.items.map(idx => h(IdxCard, {
+                t, idx, q: idxQuotes[idx.code],
+                watched: holdingsCodes.includes(idx.code), onWatch,
+              })),
             ),
         h(Pager, { t, page, size, total: data.total, onPage: setPage }),
       );
@@ -814,7 +970,7 @@ window.__ModuleLoader__.load({
       return h('span', { style: { color: signColor(v), fontWeight: 600, fontVariantNumeric: 'tabular-nums' } }, text);
     }
 
-    function FundSub({ t, holdingsCodes, onWatch, onOpenDetail, refreshKey }) {
+    function FundSub({ t, holdingsCodes, onWatch, onOpenDetail, refreshKey, marketQuotes }) {
       const [page, setPage] = useState(1);
       const [query, setQuery] = useState('');
       const [fundType, setFundType] = useState('all');
@@ -822,20 +978,29 @@ window.__ModuleLoader__.load({
       const [types, setTypes] = useState([]);
       const [data, setData] = useState({ items: [], total: 0, error: '' });
       const [loading, setLoading] = useState(true);
+      // 基金状态：默认只看在售基金，设置页可切换为全部。
+      const [fundStatus, setFundStatus] = useState(() => {
+        try { return localStorage.getItem(FUND_STATUS_KEY) === 'all' ? 'all' : 'onsale'; } catch { return 'onsale'; }
+      });
       const size = 20;
       useEffect(() => {
+        const onChange = e => setFundStatus(e.detail === 'all' ? 'all' : 'onsale');
+        window.addEventListener('ft-fund-status-changed', onChange);
+        return () => window.removeEventListener('ft-fund-status-changed', onChange);
+      }, []);
+      useEffect(() => {
         let alive = true;
-        fetch('/fund-tracker/api?action=fundtypes')
+        fetch(`/fund-tracker/api?action=fundtypes&status=${fundStatus}`)
           .then(r => r.json())
           .then(d => { if (alive) setTypes((d && d.types) || []); })
           .catch(() => {});
         return () => { alive = false; };
-      }, [refreshKey]);
+      }, [refreshKey, fundStatus]);
       useEffect(() => {
         let alive = true;
         setLoading(true);
         const timer = setTimeout(() => {
-          fetch(`/fund-tracker/api?action=fundlist&page=${page}&size=${size}&query=${encodeURIComponent(query.trim())}&type=${encodeURIComponent(fundType)}`)
+          fetch(`/fund-tracker/api?action=fundlist&page=${page}&size=${size}&query=${encodeURIComponent(query.trim())}&type=${encodeURIComponent(fundType)}&status=${fundStatus}`)
             .then(r => r.json())
             .then(d => {
               if (!alive) return;
@@ -845,7 +1010,7 @@ window.__ModuleLoader__.load({
             .catch(e => { if (alive) { setData({ items: [], total: 0, error: `fetch failed: ${e}` }); setLoading(false); } });
         }, 250);
         return () => { alive = false; clearTimeout(timer); };
-      }, [page, query, fundType, refreshKey]);
+      }, [page, query, fundType, fundStatus, refreshKey]);
       const codes = useMemo(() => data.items.map(x => x.code), [data.items]);
       const quotes = useQuotes(codes, refreshKey);
       const list = useMemo(() => {
@@ -921,6 +1086,16 @@ window.__ModuleLoader__.load({
       const [msg, setMsg] = useState(null);
       const [idxConfig, setIdxConfig] = useState({ library: [], selected: [], loggedIn: true });
       const [picked, setPicked] = useState(null);
+      // 今日行情 · 基金状态显示设置（本地持久化，默认在售）。
+      const [fundStatus, setFundStatusState] = useState(() => {
+        try { return localStorage.getItem(FUND_STATUS_KEY) === 'all' ? 'all' : 'onsale'; } catch { return 'onsale'; }
+      });
+      const setFundStatusPersist = v => {
+        const next = v === 'all' ? 'all' : 'onsale';
+        setFundStatusState(next);
+        try { localStorage.setItem(FUND_STATUS_KEY, next); } catch {}
+        window.dispatchEvent(new CustomEvent('ft-fund-status-changed', { detail: next }));
+      };
       const selected = picked || idxConfig.selected || [];
       const toggle = code => {
         const base = picked || [...(idxConfig.selected || [])];
@@ -1002,6 +1177,26 @@ window.__ModuleLoader__.load({
             h('button', { className: 'ft-btn', disabled: libUpdating, onClick: refreshLib },
               libUpdating ? t('libUpdating') : t('libUpdate')),
           ),
+          h('div', { className: 'ft-actions', style: { marginTop: 4 } },
+            h('span', null, libInfo && libInfo.nav
+              ? t('navSyncStatus')(libInfo.nav.funds, libInfo.nav.total,
+                libInfo.nav.doneAt ? new Date(libInfo.nav.doneAt).toLocaleString('zh-CN') : null)
+              : t('refreshing')),
+          ),
+        ),
+        h('div', { className: 'ft-set-block' },
+          h('div', { className: 'ft-set-label' }, t('fundStatusTitle')),
+          h('div', { className: 'ft-idx-picks', style: { marginTop: 4 } },
+            ['onsale', 'all'].map(st => h('button', {
+              key: st,
+              className: `ft-pick${fundStatus === st ? ' ft-pick-on' : ''}`,
+              onClick: () => setFundStatusPersist(st),
+              title: st === 'onsale' ? t('fundStatusOnSaleHint') : t('fundStatusAllHint'),
+            }, st === 'onsale' ? t('fundStatusOnSale') : t('fundStatusAll'))),
+          ),
+          h('div', { className: 'ft-actions', style: { marginTop: 4 } },
+            h('span', { className: 'ft-code' }, fundStatus === 'onsale' ? t('fundStatusOnSaleHint') : t('fundStatusAllHint')),
+          ),
         ),
         h('div', { className: 'ft-set-block' },
           h('div', { className: 'ft-set-label' }, `${t('editIndices')} · ${t('panel')}`),
@@ -1054,14 +1249,14 @@ window.__ModuleLoader__.load({
       );
     }
 
-    function MarketTab({ t, market, idxQuotes, idxConfig, onSaveSelection, holdingsCodes, onWatch, onOpenDetail, refreshKey,
+    function MarketTab({ t, market, idxQuotes, idxConfig, marketQuotes, onSaveSelection, holdingsCodes, onWatch, onOpenDetail, refreshKey,
                          sub, setSub, subOrder, onOrderChange }) {
       const active = pick(sub, MARKET_SUBS, 'index');
       const order = withDefaults(subOrder, MARKET_SUBS);
       const choose = setSub || (() => {});
       return h(React.Fragment, null,
         h(SortableTabs, {
-          t, className: 'ft-subtabs', items: order.map(k => ({ key: k, label: t(k === 'index' ? 'subIdx' : k === 'fund' ? 'subFund' : 'subEtf') })),
+          t, className: 'ft-subtabs', items: order.map(k => ({ key: k, label: t(k === 'index' ? 'marketSubIdx' : k === 'fund' ? 'marketSubFund' : 'subEtf') })),
           active, onSelect: choose, onOrderChange,
         }),
         active === 'index' && h(IndexSub, { t, idxQuotes, idxConfig, onSaveSelection, holdingsCodes, onWatch, refreshKey }),
@@ -1071,7 +1266,7 @@ window.__ModuleLoader__.load({
     }
 
     function WatchTab({ t, idxQuotes, idxConfig, onSaveSelection, rows, editing, setEditing, onSaveEdit, onRemove, onOpenDetail, saving, form, setForm, marketQuotes,
-                        sub, setSub, subOrder, onOrderChange }) {
+                        sub, setSub, subOrder, onOrderChange, navOf, onToHold, onWatchTrade }) {
       const selected = idxConfig.selected || [];
       const removeIdx = code => onSaveSelection(selected.filter(c => c !== code), () => {});
       const watchRows = rows.filter(r => r.hold.watch || (r.hold.watch == null && r.hold.shares == null && r.hold.cost == null))
@@ -1079,10 +1274,38 @@ window.__ModuleLoader__.load({
       const active = pick(sub, WATCH_SUBS, 'index');
       const order = withDefaults(subOrder, WATCH_SUBS);
       const choose = setSub || (() => {});
+      // Amount-only "add to holdings": shares/cost are computed from the NAV.
+      const [toHoldCode, setToHoldCode] = useState(null);
+      const [toHoldAmount, setToHoldAmount] = useState('');
+      // Inline add/reduce trade panel for funds that are already held.
+      const [tradeRow, setTradeRow] = useState(null); // { code, mode }
+      const [tradeAmount, setTradeAmount] = useState('');
+      const openToHold = code => {
+        setEditing(null); setTradeRow(null); setToHoldCode(code); setToHoldAmount('');
+      };
+      const confirmToHold = async () => {
+        const amount = Number(String(toHoldAmount || '').trim());
+        if (!isFinite(amount) || amount <= 0) return;
+        await onToHold(toHoldCode, amount);
+        setToHoldCode(null); setToHoldAmount('');
+      };
+      const openTrade = (code, mode) => {
+        setToHoldCode(null); setTradeRow({ code, mode }); setTradeAmount('');
+      };
+      const confirmTrade = async () => {
+        const amount = Number(String(tradeAmount || '').trim());
+        if (!tradeRow || !isFinite(amount) || amount <= 0) return;
+        await onWatchTrade(tradeRow.code, tradeRow.mode, amount);
+        setTradeRow(null); setTradeAmount('');
+      };
+      const toHoldNavHint = code => {
+        const nav = navOf ? navOf(code) : null;
+        return nav != null ? t('toHoldNavHint')(nav) : t('pendingHint');
+      };
       return h(React.Fragment, null,
         h(SortableTabs, {
           t, className: 'ft-subtabs',
-          items: order.map(k => ({ key: k, label: k === 'index' ? `${t('indices')} (${selected.length})` : `${t('subFund')} (${watchRows.length})` })),
+          items: order.map(k => ({ key: k, label: k === 'index' ? `${t('watchSubIdx')} (${selected.length})` : `${t('watchSubFund')} (${watchRows.length})` })),
           active, onSelect: choose, onOrderChange,
         }),
         active === 'index' && h('div', { className: 'ft-section' },
@@ -1090,18 +1313,11 @@ window.__ModuleLoader__.load({
             ? h('div', { className: 'ft-empty' }, t('watchIdxEmpty'))
             : h('div', { className: 'ft-idx-grid' },
                 selected.map(code => {
-                  const q = idxQuotes[code];
-                  const meta = (idxConfig.library || []).find(x => x.code === code);
-                  return h('div', { className: 'ft-idx-cell', key: code },
-                    h('div', { className: 'ft-idx-name', title: (meta && meta.name) || code }, (meta && meta.name) || code),
-                    h('div', { className: 'ft-code' }, code),
-                    h('div', { className: 'ft-idx-price' }, money(q ? q.price : null)),
-                    h('div', { className: 'ft-idx-pct' }, h(ChangeBadge, { v: q ? q.changePct : null })),
-                    h('button', {
-                      className: 'ft-act', 'aria-label': `${t('remove')} ${(meta && meta.name) || code}`,
-                      onClick: () => removeIdx(code),
-                    }, `✕ ${t('remove')}`),
-                  );
+                  const meta = (idxConfig.library || []).find(x => x.code === code) || { code, name: code };
+                  return h(IdxCard, {
+                    t, idx: meta, q: idxQuotes[code], watched: true,
+                    onRemove: () => removeIdx(code),
+                  });
                 }),
               ),
         ),
@@ -1112,31 +1328,61 @@ window.__ModuleLoader__.load({
                 h('thead', null, h('tr', null,
                   h('th', null, t('panel')), h('th', null, t('sector')), h('th', null, t('nav')), h('th', null, t('yesterday')), h('th', null, ''),
                 )),
-                h('tbody', null, watchRows.map(r => editing === r.hold.code
-                  ? h('tr', { key: r.hold.code }, h('td', { colSpan: 5 },
-                      h('div', { className: 'ft-actions', style: { marginTop: 2 } },
+                h('tbody', null, watchRows.map(r => {
+                  const isHeld = r.hold.shares != null || r.pending != null;
+                  if (toHoldCode === r.hold.code) {
+                    return h('tr', { key: r.hold.code }, h('td', { colSpan: 5 },
+                      h('div', { className: 'ft-actions', style: { marginTop: 2, flexWrap: 'wrap' } },
                         h('span', { className: 'ft-code' }, r.hold.code),
-                        h('input', { className: 'ft-input ft-input-sm', placeholder: t('shares'), inputMode: 'decimal', value: form.shares, onChange: e => setForm({ ...form, shares: e.target.value }) }),
-                        h('input', { className: 'ft-input ft-input-sm', placeholder: t('cost'), inputMode: 'decimal', value: form.cost, onChange: e => setForm({ ...form, cost: e.target.value }) }),
-                        h('input', { className: 'ft-input ft-input-sm', placeholder: t('amountShort'), inputMode: 'decimal', value: form.amount || '', onChange: e => setForm({ ...form, amount: e.target.value }) }),
-                        h('button', { className: 'ft-btn', disabled: saving, onClick: () => onSaveEdit(r.hold.code) }, t('add')),
-                        h('button', { className: 'ft-btn', onClick: () => setEditing(null) }, t('cancel')),
+                        h('input', {
+                          className: 'ft-input ft-input-sm', placeholder: t('toHoldAmountPh'),
+                          inputMode: 'decimal', autoFocus: true, value: toHoldAmount,
+                          onChange: e => setToHoldAmount(e.target.value),
+                          onKeyDown: e => { if (e.key === 'Enter') confirmToHold(); },
+                        }),
+                        h('span', { className: 'ft-field-hint' }, toHoldNavHint(r.hold.code)),
+                        h('button', { className: 'ft-btn ft-btn-primary', disabled: saving, onClick: confirmToHold }, t('confirmAdd')),
+                        h('button', { className: 'ft-btn', onClick: () => setToHoldCode(null) }, t('cancel')),
                       ),
-                    ))
-                  : h('tr', { key: r.hold.code, className: 'ft-row', onClick: () => onOpenDetail(r.hold) },
-                      h('td', null,
-                        (r.q && r.q.name) || r.hold.name || r.hold.code, ' ',
-                        h('span', { className: 'ft-code' }, r.hold.code),
-                        r.hold.shares != null && h('span', { className: 'ft-flag' }, t('tabHold')),
+                    ));
+                  }
+                  if (tradeRow && tradeRow.code === r.hold.code) {
+                    const add = tradeRow.mode === 'add';
+                    return h('tr', { key: r.hold.code }, h('td', { colSpan: 5 },
+                      h('div', { className: 'ft-actions', style: { marginTop: 2, flexWrap: 'wrap' } },
+                        h('span', { style: { color: signColor(add ? 1 : -1), fontWeight: 600 } }, add ? `＋ ${t('addShare')}` : `－ ${t('reduceShare')}`),
+                        h('input', {
+                          className: 'ft-input ft-input-sm', placeholder: t('toHoldAmountPh'),
+                          inputMode: 'decimal', autoFocus: true, value: tradeAmount,
+                          onChange: e => setTradeAmount(e.target.value),
+                          onKeyDown: e => { if (e.key === 'Enter') confirmTrade(); },
+                        }),
+                        h('button', { className: 'ft-btn ft-btn-primary', disabled: saving, onClick: confirmTrade }, t('confirmAdd')),
+                        h('button', { className: 'ft-btn', onClick: () => setTradeRow(null) }, t('cancel')),
                       ),
-                      h('td', null, h(SectorCell, { t, name: r.hold.name || r.hold.code, marketQuotes })),
-                      h('td', null, money(r.nav)),
-                      h('td', null, h(ChangeBadge, { v: (r.q && r.q.yesterdayPct != null) ? r.q.yesterdayPct : r.changePct })),
-                      h('td', { onClick: e => e.stopPropagation() },
-                        h('button', { className: 'ft-act', title: r.hold.shares != null ? t('edit') : t('toHold'), onClick: () => { setEditing(r.hold.code); setForm({ shares: r.hold.shares == null ? '' : String(r.hold.shares), cost: r.hold.cost == null ? '' : String(r.hold.cost), code: r.hold.code, amount: '' }); } }, '✎ ', r.hold.shares != null ? t('edit') : t('toHold')),
-                        h('button', { className: 'ft-del', title: t('remove'), 'aria-label': `${t('remove')} ${r.hold.code}`, onClick: () => onRemove(r.hold.code) }, '✕'),
-                      ),
-                    ))),
+                    ));
+                  }
+                  return h('tr', { key: r.hold.code, className: 'ft-row', onClick: () => onOpenDetail(r.hold) },
+                    h('td', null,
+                      (r.q && r.q.name) || r.hold.name || r.hold.code, ' ',
+                      h('span', { className: 'ft-code' }, r.hold.code),
+                      isHeld && h('span', { className: 'ft-flag' }, t('tabHold')),
+                    ),
+                    h('td', null, h(SectorCell, { t, name: r.hold.name || r.hold.code, marketQuotes })),
+                    h('td', null, money(r.nav)),
+                    h('td', null, h(ChangeBadge, { v: (r.q && r.q.yesterdayPct != null) ? r.q.yesterdayPct : r.changePct })),
+                    h('td', { onClick: e => e.stopPropagation() },
+                      isHeld
+                        ? h(React.Fragment, null,
+                            h('button', { className: 'ft-act ft-act-buy', title: `${t('addShare')} ${r.hold.code}`, onClick: () => openTrade(r.hold.code, 'add') }, `＋ ${t('addShare')}`),
+                            h('button', { className: 'ft-act', title: `${t('reduceShare')} ${r.hold.code}`, onClick: () => openTrade(r.hold.code, 'reduce') }, `－ ${t('reduceShare')}`),
+                          )
+                        : h('button', { className: 'ft-act ft-act-buy', title: t('toHold'), onClick: () => openToHold(r.hold.code) }, `＋ ${t('toHold')}`),
+                      // 已在持仓的基金不能取消自选：无删除按钮。
+                      !isHeld && h('button', { className: 'ft-del', title: t('unwatch'), 'aria-label': `${t('unwatch')} ${r.hold.code}`, onClick: () => onRemove(r.hold.code) }, `✕ ${t('unwatch')}`),
+                    ),
+                  );
+                })),
               ),
         ),
       );
@@ -1145,13 +1391,29 @@ window.__ModuleLoader__.load({
     function MineTab({ t, rows, totals, loggedIn, editing, setEditing, onSaveEdit, onRemoveAsk, onAddWatch, onOpenDetail, sortBy, setSortBy, marketQuotes,
                        trade, setTrade, onTradeConfirm, onTradeAsk,
                        form, setForm, searchQ, setSearchQ, suggest, onSaveForm, saving,
-                       importOpen, setImportOpen, importText, setImportText, onImport, msg, onRefresh, onGoWatch }) {
+                       importOpen, setImportOpen, importText, setImportText, onImport, msg, onRefresh, onGoWatch,
+                       groups, activeGroup, setActiveGroup, groupMgrOpen, setGroupMgrOpen, groupForm, setGroupForm,
+                       onAddGroup, onRenameGroup, onDeleteGroup, onMoveGroup, onMoveBatch }) {
       const canWrite = loggedIn;
-      const positions = rows.filter(r => r.hold.shares != null || r.hold.cost != null || r.pending != null);
+      const allPositions = rows.filter(r => r.hold.shares != null || r.hold.cost != null || r.pending != null);
+      // Filter by the selected group. '__all__' shows everything; '__none__'
+      // shows holdings with no group assigned.
+      const positions = activeGroup === '__all__'
+        ? allPositions
+        : activeGroup === '__none__'
+          ? allPositions.filter(r => r.hold.groupName == null)
+          : allPositions.filter(r => r.hold.groupName === activeGroup);
       const watchedCount = rows.filter(r => r.hold.watch).length;
       const mask = v => (loggedIn ? v : '***');
+      // On the "未分组" tab you can only reassign funds to existing groups —
+      // adding/importing funds there makes no sense (new funds start ungrouped).
+      const isUngrouped = activeGroup === '__none__';
       const [addOpen, setAddOpen] = useState(false);
       const [menuCode, setMenuCode] = useState(null);
+      const [moveCode, setMoveCode] = useState(null); // fund whose "move to group" picker is open
+      const [batchMode, setBatchMode] = useState(false); // "未分组" bulk-assign mode
+      const [checkedCodes, setCheckedCodes] = useState([]); // selected ungrouped funds
+      const [batchTarget, setBatchTarget] = useState(''); // destination group name
 
       // Add / import / edit / trade panels are mutually exclusive; opening one closes the rest.
       const closeEditTrade = () => { setEditing(null); setTrade(null); };
@@ -1190,6 +1452,79 @@ window.__ModuleLoader__.load({
         className: `ft-msg${msg.kind === 'err' ? ' ft-err' : ''}`,
         role: msg.kind === 'err' ? 'alert' : 'status', 'aria-live': 'polite',
       }, msg.text);
+
+      // A single group tab (with fund count).
+      const groupTab = (key, label, count) => h('button', {
+        key, className: `ft-group-tab${activeGroup === key ? ' ft-group-tab-on' : ''}`,
+        'aria-pressed': activeGroup === key, title: label,
+        onClick: () => {
+          setActiveGroup(key); setMoveCode(null); setMenuCode(null);
+          // Leaving a tab must not leave an add/import panel dangling.
+          setAddOpen(false); setImportOpen(false); setEditing(null); setTrade(null);
+        },
+      }, `${label} (${count})`);
+
+      // Inline group management: add / rename / delete groups.
+      const groupManager = () => h('div', { className: 'ft-group-mgr-panel' },
+        h('div', { className: 'ft-form-title' }, t('groupMgrTitle')),
+        h('div', { className: 'ft-actions', style: { marginTop: 6 } },
+          h('input', {
+            className: 'ft-input ft-input-sm', placeholder: t('groupNamePh'),
+            value: groupForm.name, onChange: e => setGroupForm({ ...groupForm, name: e.target.value }),
+            onKeyDown: e => { if (e.key === 'Enter') onAddGroup(); },
+          }),
+          h('button', { className: 'ft-btn ft-btn-primary', disabled: saving, onClick: onAddGroup }, `＋ ${t('groupAdd')}`),
+        ),
+        groups.length > 0 && h('div', { className: 'ft-group-mgr-list' },
+          groups.map(g => h('div', { key: g.name, className: 'ft-group-mgr-row' },
+            h('input', {
+              className: 'ft-input ft-input-sm',
+              placeholder: g.name,
+              value: groupForm.renameFor === g.name ? groupForm.rename : '',
+              onChange: e => setGroupForm({ ...groupForm, renameFor: g.name, rename: e.target.value }),
+              'aria-label': `${t('groupRename')} ${g.name}`,
+            }),
+            h('button', { className: 'ft-btn', disabled: saving, onClick: () => onRenameGroup(g.name) }, t('groupRename')),
+            h('button', { className: 'ft-btn ft-del', disabled: saving, onClick: () => onDeleteGroup(g.name) }, `✕ ${t('remove')}`),
+          )),
+        ),
+        h('div', { className: 'ft-field-hint', style: { marginTop: 4 } }, t('groupMgrHint')),
+      );
+
+      // Bulk-assign selected ungrouped funds to an existing group.
+      const batchAssignPanel = () => {
+        const ungrouped = allPositions.filter(r => r.hold.groupName == null);
+        const allChecked = ungrouped.length > 0 && checkedCodes.length === ungrouped.length;
+        const toggleAll = () => setCheckedCodes(allChecked ? [] : ungrouped.map(r => r.hold.code));
+        const toggleOne = code => setCheckedCodes(prev => prev.includes(code) ? prev.filter(c => c !== code) : [...prev, code]);
+        return h('div', { className: 'ft-group-mgr-panel' },
+          h('div', { className: 'ft-form-title' }, t('groupBatchAssign')),
+          h('div', { className: 'ft-actions', style: { marginTop: 6 } },
+            h('button', { className: 'ft-btn', onClick: toggleAll }, allChecked ? t('groupUncheckAll') : t('groupCheckAll')),
+            h('select', {
+              className: 'ft-select', value: batchTarget, 'aria-label': t('groupMove'),
+              onChange: e => setBatchTarget(e.target.value),
+            },
+              h('option', { value: '' }, t('groupSelectTarget')),
+              groups.map(g => h('option', { key: g.name, value: g.name }, g.name)),
+            ),
+            h('button', {
+              className: 'ft-btn ft-btn-primary', disabled: saving || checkedCodes.length === 0 || !batchTarget,
+              onClick: () => { if (batchTarget) onMoveBatch(checkedCodes, batchTarget); },
+            }, `${t('groupBatchDo')} (${checkedCodes.length})`),
+          ),
+          h('div', { className: 'ft-group-batch-list' },
+            ungrouped.map(r => h('label', { key: r.hold.code, className: 'ft-group-batch-row' },
+              h('input', {
+                type: 'checkbox', checked: checkedCodes.includes(r.hold.code),
+                onChange: () => toggleOne(r.hold.code),
+              }),
+              h('span', null, `${(r.q && r.q.name) || r.hold.name || r.hold.code} `),
+              h('span', { className: 'ft-code' }, r.hold.code),
+            )),
+          ),
+        );
+      };
 
       const seg = (key, label) => h('button', {
         key, className: `ft-seg-btn${sortBy === key ? ' ft-seg-btn-on' : ''}`,
@@ -1247,12 +1582,13 @@ window.__ModuleLoader__.load({
 
       const tradePanel = r => {
         const cur = r.hold.shares == null ? 0 : Number(r.hold.shares) || 0;
-        const direct = String(form.shares == null ? '' : form.shares).trim();
         const amt = String(form.amount || '').trim();
-        const fromAmount = amt !== '' && r.amountNav != null ? Number((Number(amt) / r.amountNav).toFixed(2)) : NaN;
-        const qty = direct !== '' ? Number(direct) : fromAmount;
-        const qtyOk = isFinite(qty) && qty > 0;
-        const after = qtyOk ? Math.max(0, cur + (trade.mode === 'add' ? qty : -qty)) : null;
+        const n = Number(amt);
+        const amtOk = amt !== '' && isFinite(n) && n > 0;
+        // Estimated shares at the latest known NAV — the real number uses the
+        // confirmation-day NAV, so this is a preview only.
+        const est = amtOk && r.amountNav != null ? Number((n / r.amountNav).toFixed(2)) : null;
+        const after = est != null ? Math.max(0, cur + (trade.mode === 'add' ? est : -est)) : null;
         return h('div', { className: 'ft-form', onKeyDown: e => { if (e.key === 'Escape') setTrade(null); } },
           h('div', { className: 'ft-form-title' },
             h('span', { style: { color: signColor(trade.mode === 'add' ? 1 : -1) } },
@@ -1262,18 +1598,10 @@ window.__ModuleLoader__.load({
           h('div', { className: 'ft-code ft-num' }, t('currentShares')(cur)),
           h('div', { className: 'ft-actions', style: { marginTop: 6, alignItems: 'flex-end' } },
             h('div', { className: 'ft-field' },
-              h('label', { className: 'ft-field-label', htmlFor: `ft-trade-qty-${r.hold.code}` }, t('tradeQtyHint')),
-              h('input', {
-                id: `ft-trade-qty-${r.hold.code}`, className: 'ft-input ft-input-sm', inputMode: 'decimal', autoFocus: true,
-                value: form.shares, onChange: e => setForm({ ...form, shares: e.target.value }),
-                onKeyDown: e => { if (e.key === 'Enter') onTradeConfirm(); },
-              }),
-            ),
-            h('div', { className: 'ft-field' },
               h('label', { className: 'ft-field-label', htmlFor: `ft-trade-amount-${r.hold.code}` },
                 trade.mode === 'add' ? `${t('addShare')}${t('amountShort')}` : `${t('reduceShare')}${t('amountShort')}`),
               h('input', {
-                id: `ft-trade-amount-${r.hold.code}`, className: 'ft-input ft-input-sm', inputMode: 'decimal',
+                id: `ft-trade-amount-${r.hold.code}`, className: 'ft-input ft-input-sm', inputMode: 'decimal', autoFocus: true,
                 value: form.amount || '', onChange: e => setForm({ ...form, amount: e.target.value }),
                 onKeyDown: e => { if (e.key === 'Enter') onTradeConfirm(); },
               }),
@@ -1285,6 +1613,8 @@ window.__ModuleLoader__.load({
             }, trade.mode === 'add' ? t('confirmAdd') : t('confirmReduce')),
             h('button', { className: 'ft-btn', onClick: () => setTrade(null) }, t('cancel')),
           ),
+          h('div', { className: 'ft-field-hint', style: { marginTop: 6 } }, t('tradeRule')),
+          est != null && h('div', { className: 'ft-field-hint' }, t('estShares')(est)),
         );
       };
 
@@ -1302,6 +1632,11 @@ window.__ModuleLoader__.load({
             'aria-pressed': inWatch, disabled: inWatch || saving,
             onClick: () => onAddWatch(r.hold),
           }, inWatch ? `★ ${t('inWatch')}` : `☆ ${t('toWatch')}`),
+          h('button', {
+            className: `ft-act${moveCode === r.hold.code ? ' ft-act-on' : ''}`,
+            title: t('groupMove'), 'aria-label': `${t('groupMove')} ${name}`,
+            onClick: () => setMoveCode(moveCode === r.hold.code ? null : r.hold.code),
+          }, `▦ ${r.hold.groupName || t('groupNoneShort')}`),
           h('button', { className: 'ft-del', title: `${t('remove')} ${name}`, 'aria-label': `${t('remove')} ${name}`, onClick: () => onRemoveAsk(r.hold) }, `✕ ${t('remove')}`),
         );
       };
@@ -1329,28 +1664,31 @@ window.__ModuleLoader__.load({
         ),
         /^\d{6}$/.test(form.code) && h('div', { className: 'ft-msg', style: { marginTop: 6 } },
           h('span', { className: 'ft-chip-code' }, `${t('selectedFund')} ${form.code}`)),
+        h('div', { className: 'ft-field', style: { marginTop: 8 } },
+          h('label', { className: 'ft-field-label', htmlFor: 'ft-add-amount' },
+            `${t('amountShort')} `, h('span', { className: 'ft-field-hint' }, t('amountRule'))),
+          h('input', {
+            id: 'ft-add-amount', className: 'ft-input', inputMode: 'decimal', autoFocus: true,
+            placeholder: t('addAmountPh'), value: form.amount || '',
+            onChange: e => setForm({ ...form, amount: e.target.value }),
+          }),
+          h('div', { className: 'ft-field-hint', style: { marginTop: 4 } }, t('addAmountHint')),
+        ),
         h('div', { className: 'ft-actions', style: { marginTop: 8, alignItems: 'flex-end' } },
           h('div', { className: 'ft-field' },
             h('label', { className: 'ft-field-label', htmlFor: 'ft-add-shares' },
-              `${t('sharesShort')} `, h('span', { className: 'ft-field-hint' }, t('optionalWatch'))),
+              `${t('sharesShort')} `, h('span', { className: 'ft-field-hint' }, t('optionalAdvanced'))),
             h('input', {
               id: 'ft-add-shares', className: 'ft-input ft-input-sm', inputMode: 'decimal',
               value: form.shares, onChange: e => setForm({ ...form, shares: e.target.value }),
             }),
           ),
           h('div', { className: 'ft-field' },
-            h('label', { className: 'ft-field-label', htmlFor: 'ft-add-cost' }, t('cost')),
+            h('label', { className: 'ft-field-label', htmlFor: 'ft-add-cost' },
+              `${t('cost')} `, h('span', { className: 'ft-field-hint' }, t('optionalAdvanced'))),
             h('input', {
               id: 'ft-add-cost', className: 'ft-input ft-input-sm', inputMode: 'decimal',
               value: form.cost, onChange: e => setForm({ ...form, cost: e.target.value }),
-            }),
-          ),
-          h('div', { className: 'ft-field' },
-            h('label', { className: 'ft-field-label', htmlFor: 'ft-add-amount' },
-              `${t('amountShort')} `, h('span', { className: 'ft-field-hint' }, t('amountRule'))),
-            h('input', {
-              id: 'ft-add-amount', className: 'ft-input ft-input-sm', inputMode: 'decimal',
-              value: form.amount || '', onChange: e => setForm({ ...form, amount: e.target.value }),
             }),
           ),
           h('button', { className: 'ft-btn ft-btn-primary', disabled: saving, onClick: onSaveForm }, t('add')),
@@ -1361,15 +1699,16 @@ window.__ModuleLoader__.load({
       );
 
       const importPanel = () => h('div', { className: 'ft-form', onKeyDown: e => { if (e.key === 'Escape') setImportOpen(false); } },
-        h('div', { className: 'ft-form-title' }, t('importTitle')),
+        h('div', { className: 'ft-form-title' }, t('batchImportTitle')),
+        h('div', { className: 'ft-field-hint', style: { marginBottom: 6 } }, t('batchImportHint')),
         h('textarea', {
           className: 'ft-textarea', value: importText,
-          'aria-label': t('importTitle'),
+          'aria-label': t('batchImportTitle'),
           onChange: e => setImportText(e.target.value),
-          placeholder: '华夏成长混合 000021\n持有金额 1,234.56\n…',
+          placeholder: '000001 1000\n161725 500.50\n005827, 2000',
         }),
         h('div', { className: 'ft-actions', style: { marginTop: 6 } },
-          h('button', { className: 'ft-btn', disabled: saving, onClick: onImport }, t('import')),
+          h('button', { className: 'ft-btn ft-btn-primary', disabled: saving, onClick: onImport }, t('batchImportBtn')),
           h('button', { className: 'ft-btn', onClick: () => setImportOpen(false) }, t('cancel')),
         ),
         msgNode(),
@@ -1387,21 +1726,29 @@ window.__ModuleLoader__.load({
                 h('span', { className: 'ft-code ft-num' }, code),
                 ' ',
                 h(SectorCell, { t, name: r.hold.name || code, marketQuotes }),
-                r.pending != null && h('span', { className: 'ft-flag ft-flag-pending' }, t('pendingCalc')),
+                r.pending != null && h('span', { className: 'ft-flag ft-flag-pending', title: t('tradeRule') }, `${t('pendingCalc')} ${money(r.pending)}`),
                 r.hold.watch && h('span', { className: 'ft-flag' }, t('tabWatch')),
                 r.usingYesterday && h('span', { className: 'ft-flag ft-flag-pending' }, t('usePrevNav')),
               ),
             ),
             h('div', { className: 'ft-card-fig' },
-              h('span', { className: 'ft-amount ft-num' }, r.pending != null ? t('pendingCalc') : mask(money(r.amount))),
+              h('span', { className: 'ft-amount ft-num' }, r.amount == null ? t('pendingCalc') : mask(money(r.amount))),
               h('span', { className: 'ft-today ft-num', style: { color: loggedIn ? signColor(r.todayProfit) : null } },
-                r.pending != null ? '—' : `${mask(signedMoney(r.todayProfit))} (${pct(r.changePct)})`),
+                r.amount == null ? '—' : `${mask(signedMoney(r.todayProfit))} (${pct(r.changePct)})`),
             ),
             canWrite && h('button', {
               className: `ft-more${expanded ? ' ft-more-on' : ''}`, 'aria-expanded': expanded,
               'aria-label': t('actions'), title: t('actions'),
               onClick: () => toggleMenu(code),
-            }, t('actions'), ' ', expanded ? '▴' : '▾'),
+            }, expanded ? '▴' : '▾'),
+          ),
+          h('div', { className: 'ft-card-stats' },
+            h('span', { className: 'ft-stat' }, `${t('nav')} `, h('b', null, money(r.nav))),
+            h('span', { className: 'ft-stat' }, `${t('costShort')} `, h('b', null, mask(money(r.hold.cost)))),
+            h('span', { className: 'ft-stat' }, `${t('sharesShort')} `, h('b', null, r.pending != null ? t('pendingCalc') : mask(money(r.hold.shares)))),
+            h('span', { className: 'ft-stat' }, `${t('totalPct')} `, h('b', { style: { color: loggedIn ? signColor(r.totalProfit) : null } },
+              r.pending != null ? '—' : loggedIn ? pct(r.totalPct) : '***')),
+            r.usingYesterday && h('span', { className: 'ft-stat ft-flag-pending' }, t('usePrevNav')),
           ),
           h('div', { className: 'ft-card-meta' },
             metaCell(t('nav'), money(r.nav)),
@@ -1411,15 +1758,52 @@ window.__ModuleLoader__.load({
             metaCell(t('totalPct'), r.pending != null ? '—' : loggedIn ? pct(r.totalPct) : '***', loggedIn ? signColor(r.totalProfit) : null),
             h('button', { className: 'ft-link', onClick: () => onOpenDetail(r.hold) }, `${t('detail')} ›`),
           ),
-          expanded && (trade && trade.code === code ? tradePanel(r) : editing === code ? editPanel(r) : actionBar(r)),
+          expanded && (trade && trade.code === code ? tradePanel(r)
+            : editing === code ? editPanel(r)
+              : moveCode === code ? groupMover(r)
+                : actionBar(r)),
         );
       };
+
+      // Group picker shown inside an expanded card.
+      const groupMover = r => h('div', { className: 'ft-form', onKeyDown: e => { if (e.key === 'Escape') setMoveCode(null); } },
+        h('div', { className: 'ft-form-title' }, `${t('groupMove')} · ${r.hold.name || r.hold.code}`),
+        h('div', { className: 'ft-group-mgr-list', style: { marginTop: 6 } },
+          [['__none__', t('groupNone')], ...groups.map(g => [g.name, g.name])].map(([key, label]) =>
+            h('button', {
+              key, className: `ft-pick${(r.hold.groupName || '__none__') === key ? ' ft-pick-on' : ''}`,
+              disabled: saving,
+              onClick: () => { onMoveGroup(r.hold.code, key === '__none__' ? null : key); setMoveCode(null); },
+            }, label),
+          ),
+        ),
+        h('div', { className: 'ft-actions', style: { marginTop: 6 } },
+          h('button', { className: 'ft-btn', onClick: () => setMoveCode(null) }, t('cancel')),
+        ),
+      );
 
       return h(React.Fragment, null,
         !loggedIn && h('div', { className: 'ft-lock' },
           h('div', { className: 'ft-lock-title' }, '🔒 ', t('loginMaskTitle')),
           h('div', null, t('loginMaskHint')),
         ),
+        loggedIn && h('div', { className: 'ft-groupbar' },
+          groupTab('__all__', t('groupAll'), allPositions.length),
+          groups.map(g => groupTab(g.name, g.name, allPositions.filter(r => r.hold.groupName === g.name).length)),
+          groupTab('__none__', t('groupNone'), allPositions.filter(r => r.hold.groupName == null).length),
+          activeGroup === '__none__' && groups.length > 0 && h('button', {
+            className: `ft-group-mgr${batchMode ? ' ft-group-mgr-on' : ''}`,
+            title: t('groupBatchAssign'), 'aria-label': t('groupBatchAssign'),
+            onClick: () => { setBatchMode(o => !o); setCheckedCodes([]); setBatchTarget(''); },
+          }, batchMode ? '▴' : `⇥ ${t('groupBatchAssign')}`),
+          h('button', {
+            className: `ft-group-mgr${groupMgrOpen ? ' ft-group-mgr-on' : ''}`,
+            title: t('groupManage'), 'aria-label': t('groupManage'),
+            onClick: () => setGroupMgrOpen(o => !o),
+          }, groupMgrOpen ? '▴' : '⚙'),
+        ),
+        loggedIn && groupMgrOpen && groupManager(),
+        loggedIn && batchMode && activeGroup === '__none__' && batchAssignPanel(),
         positions.length > 0 && h('div', { className: 'ft-overview' },
           h('div', { className: 'ft-ov-cell' },
             h('div', { className: 'ft-ov-label' }, t('totalAsset')),
@@ -1443,17 +1827,17 @@ window.__ModuleLoader__.load({
           h('div', { className: 'ft-seg', role: 'group', 'aria-label': t('sortBy') },
             seg('today', t('sortToday')), seg('profit', t('sortProfit')), seg('amount', t('sortAmount'))),
           h('span', { style: { marginLeft: 'auto', display: 'flex', gap: 6 } },
-            h('button', { className: 'ft-btn ft-btn-primary', onClick: openAdd, 'aria-expanded': addOpen }, `＋ ${t('addFund')}`),
-            h('button', { className: 'ft-btn', onClick: toggleImport, 'aria-expanded': importOpen }, t('importShort')),
+            !isUngrouped && h('button', { className: 'ft-btn ft-btn-primary', onClick: openAdd, 'aria-expanded': addOpen }, `＋ ${t('addFund')}`),
+            !isUngrouped && h('button', { className: 'ft-btn', onClick: toggleImport, 'aria-expanded': importOpen }, t('importShort')),
             h('button', { className: 'ft-btn', onClick: onRefresh, 'aria-label': t('refresh'), title: t('refresh') }, '⟳'),
           ),
         ),
-        canWrite && addOpen && addPanel(),
-        canWrite && importOpen && importPanel(),
+        canWrite && !isUngrouped && addOpen && addPanel(),
+        canWrite && !isUngrouped && importOpen && importPanel(),
         positions.length === 0
           ? h('div', { className: 'ft-empty-card' },
-              h('div', { style: { marginBottom: 8 } }, t('empty')),
-              canWrite && h('div', { className: 'ft-actions', style: { marginTop: 0, justifyContent: 'center' } },
+              h('div', { style: { marginBottom: 8 } }, isUngrouped ? t('groupNoneEmpty') : t('empty')),
+              canWrite && !isUngrouped && h('div', { className: 'ft-actions', style: { marginTop: 0, justifyContent: 'center' } },
                 h('button', { className: 'ft-btn ft-btn-primary', onClick: openAdd }, `＋ ${t('addFirst')}`),
                 h('button', { className: 'ft-btn', onClick: toggleImport, 'aria-expanded': importOpen }, t('importShort'))),
               watchedCount > 0 && h('div', { style: { marginTop: 8 } },
@@ -1496,6 +1880,19 @@ window.__ModuleLoader__.load({
       const [detailInfo, setDetailInfo] = useState(null);
       const [confirmDel, setConfirmDel] = useState(null);
       const [trade, setTrade] = useState(null);
+      // Custom holdings groups: last selected group in localStorage; the
+      // group definitions come from the host (per-account SQLite).
+      const [groups, setGroups] = useState([]);
+      const [activeGroup, setActiveGroup] = useState(() => {
+        try { return localStorage.getItem(GROUP_ACTIVE_KEY) || '__all__'; } catch { return '__all__'; }
+      });
+      const [groupMgrOpen, setGroupMgrOpen] = useState(false);
+      const [groupForm, setGroupForm] = useState({ name: '', rename: '', renameFor: null });
+
+      const persistActiveGroup = g => {
+        setActiveGroup(g);
+        try { localStorage.setItem(GROUP_ACTIVE_KEY, g); } catch {}
+      };
 
       const setIntervalSec = v => {
         setIntervalSecState(v);
@@ -1560,11 +1957,25 @@ window.__ModuleLoader__.load({
             if (!alive) return;
             setLoggedIn(!!(state && state.loggedIn));
             if (state && state.loggedIn) {
-              return fetch('/fund-tracker/api?action=list').then(r => r.json()).then(data => {
+              return Promise.all([
+                fetch('/fund-tracker/api?action=list').then(r => r.json()),
+                fetch('/fund-tracker/api?action=grouplist').then(r => r.json()),
+              ]).then(([data, gd]) => {
                 if (!alive) return;
                 if (data && Array.isArray(data.items)) {
                   setHoldings(data.items);
                   saveCache(data.items);
+                }
+                if (gd && Array.isArray(gd.groups)) {
+                  setGroups(gd.groups);
+                  // Drop a stale selected group (deleted or another account).
+                  setActiveGroup(prev => {
+                    if (prev === '__all__' || prev === '__none__') return prev;
+                    if (gd.groups.some(g => g.name === prev)) return prev;
+                    const safe = '__all__';
+                    try { localStorage.setItem(GROUP_ACTIVE_KEY, safe); } catch {}
+                    return safe;
+                  });
                 }
               });
             }
@@ -1573,6 +1984,78 @@ window.__ModuleLoader__.load({
           .catch(() => {});
         return () => { alive = false; };
       }, [refreshKey]);
+
+      // Group CRUD helpers (all require login; host enforces 403).
+      const groupApi = async (action, body) => {
+        const response = await fetch(`/fund-tracker/api?action=${action}`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body || {}),
+        });
+        return response.json();
+      };
+      const applyGroupResult = data => {
+        if (!data) return;
+        if (Array.isArray(data.groups)) setGroups(data.groups);
+        if (Array.isArray(data.items)) { setHoldings(data.items); saveCache(data.items); }
+      };
+      const addGroupAction = async () => {
+        const name = String(groupForm.name || '').trim();
+        if (!name) return;
+        setSaving(true);
+        try {
+          const data = await groupApi('groupadd', { name });
+          if (data && data.error) setMsg({ kind: 'err', text: data.error });
+          else { setGroupForm({ name: '', rename: '' }); setMsg(null); persistActiveGroup(name); setRefreshKey(k => k + 1); }
+        } finally { setSaving(false); }
+      };
+      const renameGroupAction = async oldName => {
+        if (groupForm.renameFor !== oldName) {
+          setGroupForm({ ...groupForm, renameFor: oldName, rename: '' }); // first click focuses the row
+          return;
+        }
+        const newName = String(groupForm.rename || '').trim();
+        if (!newName || newName === oldName) return;
+        setSaving(true);
+        try {
+          const data = await groupApi('grouprename', { oldName, newName });
+          if (data && data.error) setMsg({ kind: 'err', text: data.error });
+          else {
+            if (activeGroup === oldName) persistActiveGroup(newName);
+            setGroupForm({ name: '', rename: '', renameFor: null }); setMsg(null); applyGroupResult(data); setRefreshKey(k => k + 1);
+          }
+        } finally { setSaving(false); }
+      };
+      const deleteGroupAction = async name => {
+        setSaving(true);
+        try {
+          const data = await groupApi('groupdelete', { name });
+          if (data && data.error) setMsg({ kind: 'err', text: data.error });
+          else {
+            if (activeGroup === name) persistActiveGroup('__all__');
+            setMsg(null); applyGroupResult(data); setRefreshKey(k => k + 1);
+          }
+        } finally { setSaving(false); }
+      };
+      const moveToGroup = async (code, name) => {
+        setSaving(true);
+        try {
+          const data = await groupApi('groupmove', { code, name });
+          if (data && data.error) setMsg({ kind: 'err', text: data.error });
+          else { setMsg(null); applyGroupResult(data); setRefreshKey(k => k + 1); }
+        } finally { setSaving(false); }
+      };
+      const moveBatchToGroup = async (codes, name) => {
+        if (!codes || codes.length === 0) return;
+        setSaving(true);
+        try {
+          const data = await groupApi('groupmovebatch', { codes, name });
+          if (data && data.error) setMsg({ kind: 'err', text: data.error });
+          else {
+            setMsg({ kind: 'ok', text: t('groupBatchDone')(data.moved || 0) });
+            applyGroupResult(data); setRefreshKey(k => k + 1);
+          }
+        } finally { setSaving(false); }
+      };
 
       useEffect(() => {
         const id = setInterval(() => setRefreshKey(k => k + 1), intervalSec * 1000);
@@ -1616,23 +2099,32 @@ window.__ModuleLoader__.load({
       const rows = useMemo(() => holdings.map(hold => {
         const q = allQuotes[hold.code];
         // ETF quotes carry `price` instead of `nav`; `prevNav` is yesterday's NAV.
+        // fund_nav（服务端每日净值表）作为兜底：行情接口失败时仍有净值可显示。
         const nav = q ? (q.nav != null ? q.nav : (q.price != null ? q.price : null)) : null;
+        const navShown = nav != null ? nav : (hold.nav != null ? hold.nav : null);
         const hasTodayNav = isTodayNav(q && q.navDate);
         const prevNav = q
           ? (q.prevNav != null ? q.prevNav
             : (q.price != null && q.changePct != null && q.changePct > -100 ? q.price / (1 + q.changePct / 100) : null))
           : null;
+        const prevNavShown = prevNav != null ? prevNav : (hold.prevNav != null ? hold.prevNav : null);
         // 今日净值未公布时用昨日净值计算持仓金额与汇总。
-        const usingYesterday = !hasTodayNav && prevNav != null && prevNav > 0;
-        const amountNav = usingYesterday ? prevNav : nav;
+        const usingYesterday = !hasTodayNav && prevNavShown != null && prevNavShown > 0;
+        const amountNav = usingYesterday ? prevNavShown : navShown;
         const changePct = q && q.changePct != null && !usingYesterday ? q.changePct : null;
-        const amount = amountNav != null && hold.shares != null ? hold.shares * amountNav : null;
+        // 服务端（fund_nav 表）已算好 持仓金额 = 份额×净值 + 待确认买入金额；
+        // 行情接口拿不到净值时（新基金/断网）退回本地估算。
+        const quoteAmount = amountNav != null && hold.shares != null ? hold.shares * amountNav : null;
+        const amount = hold.amount != null ? hold.amount : quoteAmount;
+        const settleNav = hold.nav != null ? hold.nav : amountNav;
         const todayProfit = amount != null && changePct != null ? amount * changePct / (100 + changePct) : null;
-        const totalProfit = amountNav != null && hold.cost != null && hold.shares != null ? (amountNav - hold.cost) * hold.shares : null;
-        const totalPct = amountNav != null && hold.cost ? (amountNav / hold.cost - 1) * 100 : null;
-        // Amount entered before any NAV was known: shares are filled in later.
-        const pending = hold.pendingAmount != null && hold.pendingAmount > 0 ? hold.pendingAmount : null;
-        return { hold, q, nav, prevNav, amountNav, usingYesterday, changePct, amount, todayProfit, totalProfit, totalPct, pending };
+        const totalProfit = settleNav != null && hold.cost != null && hold.shares != null ? (settleNav - hold.cost) * hold.shares : null;
+        const totalPct = settleNav != null && hold.cost ? (settleNav / hold.cost - 1) * 100 : null;
+        // 待确认：交易记录里的金额（T+1/QDII T+2 确认前），或旧版 pendingAmount。
+        const pendingBuy = hold.pendingBuy > 0 ? hold.pendingBuy : null;
+        const pending = pendingBuy != null ? pendingBuy
+          : (hold.pendingAmount != null && hold.pendingAmount > 0 ? hold.pendingAmount : null);
+        return { hold, q, nav: navShown, prevNav: prevNavShown, amountNav, usingYesterday, changePct, amount, todayProfit, totalProfit, totalPct, pending };
       }), [holdings, allQuotes]);
 
       const totals = useMemo(() => {
@@ -1688,14 +2180,22 @@ window.__ModuleLoader__.load({
         return data;
       };
 
-      // Latest usable NAV for a code: yesterday's when today's is still unpublished.
+      // Latest usable NAV for a code: quote source first, then the local
+      // fund_nav table (holdings carry `nav` from the server) as fallback.
+      // Yesterday's NAV is used when today's is not published yet.
       const navOf = code => {
         const q = allQuotes[code];
-        if (!q) return null;
+        const hold = holdings.find(x => x.code === code);
+        if (!q) return hold && hold.nav != null ? hold.nav : null;
         const prev = q.prevNav != null ? q.prevNav
           : (q.price != null && q.changePct != null && q.changePct > -100 ? q.price / (1 + q.changePct / 100) : null);
-        if (!isTodayNav(q.navDate) && prev != null && prev > 0) return prev;
-        return q.nav != null ? q.nav : (q.price != null ? q.price : null);
+        if (!isTodayNav(q.navDate)) {
+          if (prev != null && prev > 0) return prev;
+          return hold && hold.nav != null ? hold.nav : null;
+        }
+        if (q.nav != null) return q.nav;
+        if (q.price != null) return q.price;
+        return hold && hold.nav != null ? hold.nav : null;
       };
 
       const saveForm = async () => {
@@ -1760,43 +2260,33 @@ window.__ModuleLoader__.load({
         setEditing(null);
         setRefreshKey(k => k + 1);
       };
+      // 自选基金「加入持仓」：只填金额，按最新净值自动折算份额与成本。
+      const toHoldByAmount = async (code, amount) => {
+        const nav = navOf(code);
+        if (!nav || !(nav > 0)) { setMsg({ kind: 'err', text: t('pendingHint') }); return; }
+        const n = Number(amount);
+        if (!isFinite(n) || n <= 0) return;
+        setSaving(true);
+        try {
+          const name = holdings.find(x => x.code === code)?.name || '';
+          await apiSave({
+            code, name,
+            shares: String(Number((n / nav).toFixed(2))),
+            cost: String(nav),
+            pendingAmount: '',
+            watch: true, // 保留在自选，同时成为持仓
+          });
+          setMsg({ kind: 'ok', text: t('toHoldDone')(n, nav) });
+          setRefreshKey(k => k + 1);
+        } finally { setSaving(false); }
+      };
       const removeFund = async code => {
         if (editing === code) setEditing(null);
         try { await apiDelete(code); } catch {}
       };
 
-      // 待计算：录入金额时还取不到净值。之后任意一次刷新拿到净值就折算份额并落库，
-      // 因此它最多停留到下一次行情可取时（通常第二天）。
-      useEffect(() => {
-        if (!loggedIn) return;
-        const ready = holdings
-          .filter(h => h.pendingAmount != null && h.pendingAmount > 0 && !settleLocks.has(h.code))
-          .map(h => ({ h, nav: navOf(h.code) }))
-          .filter(x => x.nav != null);
-        if (ready.length === 0) return;
-        let alive = true;
-        (async () => {
-          for (const { h, nav } of ready) {
-            settleLocks.add(h.code);
-            try {
-              await apiSave({
-                code: h.code,
-                name: h.name || '',
-                shares: String(Number((h.pendingAmount / nav).toFixed(2))),
-                cost: h.cost != null ? String(h.cost) : String(nav),
-                pendingAmount: '',
-              });
-            } catch {
-              // leave it pending; the next refresh retries
-            } finally {
-              settleLocks.delete(h.code);
-            }
-          }
-          if (alive) setRefreshKey(k => k + 1);
-        })();
-        return () => { alive = false; };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, [holdings, allQuotes, loggedIn]);
+      // 待确认金额的折算已由服务端在 action=list 时完成（fund_nav 表 + T+1 规则），
+      // 客户端不再自行结算。
       // Removing from 我的自选 must not delete a real position: watch-only rows are
       // deleted, positions just lose the watch flag.
       const removeFromWatch = async hold => {
@@ -1809,11 +2299,11 @@ window.__ModuleLoader__.load({
       const addToWatch = async hold => {
         await addWatch({ code: hold.code, name: hold.name || '' });
       };
-      const apiTrade = async (code, delta) => {
+      const apiTrade = async (code, mode, amount) => {
         const response = await fetch('/fund-tracker/api?action=trade', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ code, delta }),
+          body: JSON.stringify({ code, mode, amount }),
         });
         const data = await response.json();
         if (data && Array.isArray(data.items)) {
@@ -1824,23 +2314,27 @@ window.__ModuleLoader__.load({
       };
       const onTradeConfirm = async () => {
         if (!trade) return;
-        let qty = Number(form.shares);
-        if (String(form.shares == null ? '' : form.shares).trim() === '') {
-          const amount = String(form.amount || '').trim();
-          const nav = navOf(trade.code);
-          qty = amount !== '' && nav != null ? Number((Number(amount) / nav).toFixed(2)) : NaN;
-          if (!isFinite(qty)) { setMsg({ kind: 'err', text: t('pendingHint') }); return; }
-        }
-        if (!isFinite(qty) || qty <= 0) { setMsg({ kind: 'err', text: t('tradeQtyHint') }); return; }
+        const amount = Number(String(form.amount || '').trim());
+        if (!isFinite(amount) || amount <= 0) { setMsg({ kind: 'err', text: t('amountShort') }); return; }
         setSaving(true);
         try {
-          const delta = qty * (trade.mode === 'add' ? 1 : -1);
-          const data = await apiTrade(trade.code, delta);
+          const data = await apiTrade(trade.code, trade.mode, amount);
           if (data && data.error) setMsg({ kind: 'err', text: data.error });
-          else { setMsg(null); setTrade(null); setForm({ shares: '', cost: '', code: '', amount: '' }); setRefreshKey(k => k + 1); }
+          else {
+            setMsg({ kind: 'ok', text: t('tradeRecorded') });
+            setTrade(null); setForm({ shares: '', cost: '', code: '', amount: '' }); setRefreshKey(k => k + 1);
+          }
         } finally { setSaving(false); }
       };
       const onTradeAsk = (hold, mode) => { setEditing(null); setTrade({ code: hold.code, mode }); setForm({ shares: '', cost: '', code: hold.code, amount: '' }); };
+      // Trade directly from the watchlist tab (for funds already held).
+      const onWatchTrade = async (code, mode, amount) => {
+        const data = await apiTrade(code, mode, amount);
+        if (data && data.error) setMsg({ kind: 'err', text: data.error });
+        else setMsg({ kind: 'ok', text: t('tradeRecorded') });
+        setRefreshKey(k => k + 1);
+        return data;
+      };
       const onRemoveAsk = hold => setConfirmDel({ code: hold.code, name: hold.name || hold.code });
       const addWatch = async r => {
         setSaving(true);
@@ -1855,17 +2349,34 @@ window.__ModuleLoader__.load({
         } finally { setSaving(false); }
       };
       const doImport = async () => {
-        const parsed = parsePasted(importText);
-        if (parsed.length === 0) { setMsg({ kind: 'err', text: t('importFailed') }); return; }
+        const parsed = parseBatch(importText);
+        if (parsed.length === 0) { setMsg({ kind: 'err', text: t('batchImportFail') }); return; }
         setSaving(true);
+        let imported = 0;
+        let pending = 0;
         let fresh = 0;
         try {
           for (const p of parsed) {
             if (!holdings.some(x => x.code === p.code)) fresh += 1;
-            const watchOnly = p.shares == null && p.cost == null;
-            await apiSave(watchOnly ? { ...p, watch: true } : p);
+            const nav = navOf(p.code);
+            if (nav != null && nav > 0) {
+              // 按最新净值折算份额与成本。
+              await apiSave({
+                code: p.code,
+                name: (quotes[p.code] && quotes[p.code].name) || holdings.find(x => x.code === p.code)?.name || '',
+                shares: String(Number((p.amount / nav).toFixed(2))),
+                cost: String(nav),
+                pendingAmount: '',
+                watch: undefined, // 保留原自选状态
+              });
+              imported += 1;
+            } else {
+              // 取不到净值：先记金额，待净值可用时服务端自动折算。
+              await apiSave({ code: p.code, shares: '', cost: '', pendingAmount: String(p.amount) });
+              pending += 1;
+            }
           }
-          setMsg({ kind: 'ok', text: t('imported')(parsed.length, fresh) });
+          setMsg({ kind: 'ok', text: t('batchImportDone')(parsed.length, fresh, imported, pending) });
           setImportText('');
           setRefreshKey(k => k + 1);
         } finally { setSaving(false); }
@@ -1907,9 +2418,10 @@ window.__ModuleLoader__.load({
             onSelect: k => updateTabState({ activeMain: k }),
             onOrderChange: main => updateTabState({ main }),
           }),
+          h('div', { className: 'ft-panel-body' },
           tab === 'market'
             ? h(PanelBoundary, null, h(MarketTab, {
-                t, market, idxQuotes, idxConfig,
+                t, market, idxQuotes, idxConfig, marketQuotes,
                 onSaveSelection: saveIndexSelection,
                 holdingsCodes: holdings.filter(x => x.watch).map(x => x.code),
                 onWatch: addWatch, onOpenDetail: openDetail, refreshKey,
@@ -1923,6 +2435,7 @@ window.__ModuleLoader__.load({
                   rows: sortedRows, editing, setEditing,
                   onSaveEdit: saveEdit, onRemove: removeFromWatch,
                   onOpenDetail: openDetail, saving, form, setForm, marketQuotes,
+                  navOf, onToHold: toHoldByAmount, onWatchTrade,
                   sub: watchSub, setSub: k => updateTabState({ watchActive: k }),
                   subOrder: watchOrder, onOrderChange: watch => updateTabState({ watch }),
                 }))
@@ -1936,8 +2449,11 @@ window.__ModuleLoader__.load({
                     form, setForm, searchQ, setSearchQ, suggest, onSaveForm: saveForm, saving,
                     importOpen, setImportOpen, importText, setImportText, onImport: doImport, msg,
                     onRefresh: () => setRefreshKey(k => k + 1), onGoWatch: () => updateTabState({ activeMain: 'watch' }),
+                    groups, activeGroup, setActiveGroup: persistActiveGroup, groupMgrOpen, setGroupMgrOpen, groupForm, setGroupForm,
+                    onAddGroup: addGroupAction, onRenameGroup: renameGroupAction, onDeleteGroup: deleteGroupAction, onMoveGroup: moveToGroup, onMoveBatch: moveBatchToGroup,
                   }))
                 : h(PanelBoundary, null, h(FundSettings, null)),
+          ),
         ),
         detailInfo && h(FundDetail, {
           code: detailInfo.code, name: detailInfo.name || detailInfo.code, t,

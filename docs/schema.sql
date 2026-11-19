@@ -18,8 +18,19 @@ CREATE TABLE IF NOT EXISTS holdings (
   cost       REAL,                      -- 持仓成本价（单位净值）；NULL = 未填
   watch      INTEGER NOT NULL DEFAULT 0,-- 1 = 在我的自选；与是否有份额无关
   pending_amount REAL,                     -- 待确认金额：净值取不到时先存金额，取到后折算份额并清空
+  group_name  TEXT,                        -- 自定义分组名；NULL = 未分组
   updated_at INTEGER NOT NULL,          -- 最后更新时间戳（毫秒）
   PRIMARY KEY (account, code)
+);
+
+-- =========================================================
+-- 1b. 自定义分组（v2.4.0，按账号隔离；删除分组后旗下基金变为未分组）
+-- =========================================================
+CREATE TABLE IF NOT EXISTS fund_groups (
+  account    TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (account, name)
 );
 
 -- =========================================================
@@ -75,6 +86,40 @@ CREATE TABLE IF NOT EXISTS user_settings (
 CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT
+);
+
+-- =========================================================
+-- 7. 基金每日净值表（东方财富 FundMNHisNetList 同步，最多保留近 15 个净值日/只）
+--    打开「我的基金」时自动增量同步：最新净值日 < 今天 且 距上次同步 > 30 分钟才请求。
+--    持仓金额 = 份额 × 最新净值；净值缺失时先触发同步再计算。
+-- =========================================================
+CREATE TABLE IF NOT EXISTS fund_nav (
+  code TEXT NOT NULL,             -- 6 位基金代码
+  date TEXT NOT NULL,             -- 净值日 YYYY-MM-DD
+  nav  REAL NOT NULL,             -- 单位净值
+  pct  REAL,                      -- 当日涨跌 %
+  PRIMARY KEY (code, date)
+);
+
+-- =========================================================
+-- 8. 金额制交易记录（加仓/减仓只填金额，份额待确认）
+--    确认规则：普通基金 T+1、QDII T+2（按 fund_base 类型判断）。
+--    settleTrades() 在每次 action=list / trade 时运行：
+--    确认日（含）之后的第一条净值落库即折算 份额 = 金额 ÷ 净值，
+--    买入移动加权成本、卖出保持成本；确认前买入金额已计入持仓金额。
+-- =========================================================
+CREATE TABLE IF NOT EXISTS trades (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  account      TEXT NOT NULL,
+  code         TEXT NOT NULL,
+  side         TEXT NOT NULL,     -- 'buy' | 'sell'
+  amount       REAL NOT NULL,     -- 交易金额（元）
+  shares       REAL,              -- 确认后折算的份额
+  nav          REAL,              -- 结算所用净值
+  status       TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'confirmed'
+  trade_date   TEXT NOT NULL,     -- 下单日 YYYY-MM-DD
+  confirm_date TEXT NOT NULL,     -- 最早可确认净值日（T+1 / QDII T+2）
+  created_at   INTEGER NOT NULL
 );
 
 -- 常用查询示例 -----------------------------------------------------------

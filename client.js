@@ -472,7 +472,7 @@ window.__ModuleLoader__.load({
         if (!m) continue;
         const code = m[1];
         const rest = trimmed.slice(m.index + m[0].length);
-        const am = /[¥￥]?\s*(-?[\d,]+(?:\.\d+)?)/.exec(rest);
+        const am = /(?:[¥￥]\s*)?(\d[\d,]*\.?\d*)/.exec(rest);
         const amount = am ? Number(am[1].replace(/,/g, '')) : null;
         if (amount == null || !isFinite(amount) || amount <= 0) continue;
         const prev = found.get(code);

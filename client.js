@@ -13,6 +13,7 @@ window.__ModuleLoader__.load({
     const TAB_ORDER_KEY = 'fund-tracker.tab-order.v1';
     const FUND_STATUS_KEY = 'fund-tracker.fund-status.v1'; // 'onsale' (default) | 'all'
     const GROUP_ACTIVE_KEY = 'fund-tracker.active-group.v1'; // selected holdings group name or '__all__'
+    const IDX_ORDER_KEY = 'fund-tracker.idx-order.v1'; // dragged index-card order (code list)
     const MAIN_TABS = ['market', 'watch', 'mine', 'settings'];
     const MARKET_SUBS = ['index', 'fund', 'etf'];
     const WATCH_SUBS = ['index', 'fund'];
@@ -32,6 +33,28 @@ window.__ModuleLoader__.load({
     }
     function pick(value, defaults, fallback) {
       return defaults.includes(value) ? value : fallback;
+    }
+
+    // Custom index-card order (drag & drop), persisted across sessions.
+    function loadIdxOrder() {
+      try {
+        const v = JSON.parse(localStorage.getItem(IDX_ORDER_KEY) || '[]');
+        return Array.isArray(v) ? v.filter(x => typeof x === 'string') : [];
+      } catch { return []; }
+    }
+    function saveIdxOrder(list) {
+      try { localStorage.setItem(IDX_ORDER_KEY, JSON.stringify(list)); } catch {}
+    }
+    // Merge a new relative order of the visible subset back into the full
+    // order list: visible codes take their new sequence, codes that are not
+    // on screen (other pages) keep their previous positions.
+    function applyVisibleOrder(full, visible) {
+      const queue = visible.slice();
+      const vset = new Set(visible);
+      const out = [];
+      for (const c of full) out.push(vset.has(c) ? queue.shift() : c);
+      for (const c of queue) if (!out.includes(c)) out.push(c);
+      return out;
     }
 
     // First- and second-level tabs: drag to reorder, Alt+←/→ for keyboard users.
@@ -81,11 +104,48 @@ window.__ModuleLoader__.load({
         }, item.label)));
     }
 
+    // Draggable card grid for index cards (大盘指数 / 自选大盘指数).
+    // Same HTML5 drag interaction as SortableTabs; order changes are reported
+    // as a full key list via onOrderChange and persisted by the caller.
+    function SortableGrid({ t, items, onOrderChange, renderItem }) {
+      const [dragKey, setDragKey] = useState(null);
+      const [overKey, setOverKey] = useState(null);
+      const move = (from, to) => {
+        const keys = items.map(x => x.key);
+        const a = keys.indexOf(from);
+        const b = keys.indexOf(to);
+        if (a < 0 || b < 0 || a === b) return;
+        const next = keys.slice();
+        next.splice(a, 1);
+        next.splice(b, 0, from);
+        onOrderChange && onOrderChange(next);
+      };
+      return h('div', { className: 'ft-idx-grid' },
+        items.map(item => h('div', {
+          key: item.key,
+          className: `ft-grid-cell${dragKey === item.key ? ' ft-grid-dragging' : ''}${overKey === item.key && dragKey !== item.key ? ' ft-grid-dragover' : ''}`,
+          draggable: true,
+          title: t('dragHint'),
+          onDragStart: e => {
+            setDragKey(item.key);
+            if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', item.key); }
+          },
+          onDragOver: e => { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'; setOverKey(item.key); },
+          onDragLeave: () => setOverKey(k => (k === item.key ? null : k)),
+          onDrop: e => {
+            e.preventDefault();
+            const from = dragKey || (e.dataTransfer && e.dataTransfer.getData('text/plain'));
+            move(from, item.key);
+            setDragKey(null); setOverKey(null);
+          },
+          onDragEnd: () => { setDragKey(null); setOverKey(null); },
+        }, renderItem(item))));
+    }
+
     const DICTS = {
       'zh-CN': {
         panel: '基金小助理',
-        tabMarket: '今日行情',
-        tabWatchPage: '我的自选',
+        tabMarket: '今日行情',        tabWatchPage: '我的自选',
         tabMine: '持仓基金',
         tabSettings: '设置',
         watchIdxEmpty: '暂未关注指数。在「今日行情 → 指数 → 编辑指数」中勾选即可。',
@@ -167,8 +227,9 @@ window.__ModuleLoader__.load({
         libUpdating: '更新中…',
         libUpdated: (n, e, d) => `${n} 条 · ETF ${e} 只 · 上次更新 ${d}`,
         libUpdateDone: '基础库已更新',
-        editIndices: '编辑指数',
+        editIndices: '自选指数',
         idxSaved: '指数显示已保存',
+        idxAuto: '勾选即自动保存',
         mktTitle: '今日行情',
         subIdx: '指数',
         subFund: '基金',
@@ -342,8 +403,9 @@ window.__ModuleLoader__.load({
         libUpdating: 'Updating…',
         libUpdated: (n, e, d) => `${n} entries · ETF ${e} · updated ${d}`,
         libUpdateDone: 'Library updated',
-        editIndices: 'Edit indices',
+        editIndices: 'Watch indices',
         idxSaved: 'Index selection saved',
+        idxAuto: 'Changes save automatically',
         mktTitle: "Today's market",
         subIdx: 'Indices',
         subFund: 'Funds',
@@ -517,26 +579,27 @@ window.__ModuleLoader__.load({
     }
 
     const css = `
-.ft-root{position:fixed;right:0;top:38%;z-index:60;font-size:12px;color:var(--dsw-alias-label-primary);}
-.ft-chip{writing-mode:vertical-rl;letter-spacing:3px;padding:14px 5px;border:1px solid var(--dsw-alias-border-l2);border-right:none;border-radius:8px 0 0 8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);cursor:pointer;font:inherit;font-size:12px;box-shadow:-2px 2px 8px rgba(0,0,0,.18);}
+.ft-root{position:fixed;right:0;top:38%;z-index:60;font-size:13px;color:var(--dsw-alias-label-primary);}
+.ft-chip{writing-mode:vertical-rl;letter-spacing:3px;padding:14px 5px;border:1px solid var(--dsw-alias-border-l2);border-right:none;border-radius:8px 0 0 8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);cursor:pointer;font:inherit;font-size:13px;box-shadow:-2px 2px 8px rgba(0,0,0,.18);}
 .ft-chip:hover{background:var(--dsw-alias-bg-layer-2);}
-.ft-panel{position:fixed;right:34px;top:12%;z-index:60;width:640px;max-width:calc(100vw - 60px);height:76vh;max-height:78vh;display:flex;flex-direction:column;overflow:hidden;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:12px;box-shadow:-4px 6px 24px rgba(0,0,0,.22);padding:8px 12px 12px;}
+.ft-panel{position:fixed;right:34px;top:12%;z-index:60;width:640px;max-width:calc(100vw - 60px);height:76vh;max-height:78vh;display:flex;flex-direction:column;overflow:hidden;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:12px;box-shadow:-4px 6px 24px rgba(0,0,0,.22);padding:10px 14px 14px;}
 .ft-panel-body{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:none;}
 .ft-panel-body::-webkit-scrollbar{display:none;}
 .ft-bar{display:flex;align-items:center;gap:8px;width:100%;padding:4px 2px;text-align:left;color:inherit;font:inherit;}
-.ft-bar-title{font-weight:600;white-space:nowrap;}
-.ft-bar-sum{margin-left:auto;display:flex;gap:10px;align-items:center;white-space:nowrap;}
+.ft-bar-title{font-weight:700;font-size:15px;white-space:nowrap;}
+.ft-bar-sum{margin-left:auto;display:flex;gap:10px;align-items:center;white-space:nowrap;font-size:13px;}
+.ft-bar-sum .ft-num{font-weight:600;}
 .ft-tabs{display:flex;gap:4px;border-bottom:1px solid var(--dsw-alias-border-l1);margin:2px 0 8px;}
-.ft-tab{border:none;background:none;color:var(--dsw-alias-label-secondary);cursor:pointer;padding:5px 12px;font:inherit;font-size:12px;border-bottom:2px solid transparent;}
+.ft-tab{border:none;background:none;color:var(--dsw-alias-label-secondary);cursor:pointer;padding:7px 14px;font:inherit;font-size:14px;border-bottom:2px solid transparent;}
 .ft-tab:hover{color:var(--dsw-alias-label-primary);}
-.ft-tab-active{color:var(--dsw-alias-brand-primary);border-bottom-color:var(--dsw-alias-brand-primary);font-weight:600;}
+.ft-tab-active{color:var(--dsw-alias-brand-primary);border-bottom-color:var(--dsw-alias-brand-primary);font-weight:700;}
 .ft-tab-lock{opacity:.5;}
-.ft-close{background:none;border:none;color:var(--dsw-alias-label-secondary);cursor:pointer;padding:2px 6px;border-radius:4px;font-size:14px;}
+.ft-close{background:none;border:none;color:var(--dsw-alias-label-secondary);cursor:pointer;padding:2px 8px;border-radius:4px;font-size:16px;}
 .ft-close:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-2);}
-.ft-overview{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;background:var(--dsw-alias-bg-layer-2);border-radius:8px;padding:8px;margin-bottom:8px;}
+.ft-overview{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;background:var(--dsw-alias-bg-layer-2);border-radius:8px;padding:10px;margin-bottom:8px;}
 .ft-ov-cell{text-align:center;}
-.ft-ov-label{color:var(--dsw-alias-label-secondary);font-size:11px;}
-.ft-ov-value{font-weight:600;font-size:13px;}
+.ft-ov-label{color:var(--dsw-alias-label-secondary);font-size:12px;}
+.ft-ov-value{font-weight:600;font-size:14px;}
 .ft-lock{background:var(--dsw-alias-bg-layer-2);border-radius:8px;padding:16px;text-align:center;color:var(--dsw-alias-label-secondary);}
 .ft-lock-title{font-weight:600;color:var(--dsw-alias-label-primary);margin-bottom:6px;}
 .ft-section{margin-top:8px;}
@@ -587,12 +650,17 @@ window.__ModuleLoader__.load({
 .ft-msg{margin-top:6px;color:var(--dsw-alias-label-secondary);}
 .ft-err{color:var(--dsw-alias-state-error-primary);}
 .ft-subtabs{display:flex;gap:2px;margin:0 0 8px;background:var(--dsw-alias-bg-layer-2);border-radius:8px;padding:2px;}
-.ft-subtabs .ft-tab{flex:1;text-align:center;border-radius:6px;border-bottom:none;}
+.ft-subtabs .ft-tab{flex:1;text-align:center;border-radius:6px;border-bottom:none;font-size:13px;padding:6px 10px;}
 .ft-subtabs .ft-tab-active{background:var(--dsw-alias-bg-layer-1);}
 .ft-tab-drag{cursor:grab;}
 .ft-tab-drag:active{cursor:grabbing;}
 .ft-tab-dragover{outline:2px dashed var(--dsw-alias-brand-primary);outline-offset:-2px;}
 .ft-tab-dragging{opacity:.45;}
+/* draggable index-card grid cells */
+.ft-grid-cell{cursor:grab;min-width:0;}
+.ft-grid-cell:active{cursor:grabbing;}
+.ft-grid-dragging{opacity:.45;}
+.ft-grid-dragover .ft-idx-card{outline:2px dashed var(--dsw-alias-brand-primary);outline-offset:-2px;}
 .ft-badge{display:inline-block;min-width:56px;padding:1px 6px;border:1px solid transparent;border-radius:6px;font-weight:600;text-align:center;font-variant-numeric:tabular-nums;}
 .ft-flag{display:inline-block;margin-left:6px;padding:0 6px;border-radius:999px;font-size:10px;line-height:16px;border:1px solid var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary);vertical-align:1px;}
 .ft-flag-pending{border-color:var(--dsw-alias-label-secondary);color:var(--dsw-alias-label-secondary);}
@@ -685,7 +753,7 @@ window.__ModuleLoader__.load({
 .ft-chip-code{display:inline-block;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary);border-radius:999px;padding:1px 10px;font-weight:600;font-variant-numeric:tabular-nums;}
 .ft-btn-primary{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-bg-base);font-weight:600;min-height:32px;}
 .ft-btn-primary:hover{border-color:var(--dsw-alias-brand-primary);filter:brightness(1.08);}
-.ft-ov-value-lg{font-size:16px;font-variant-numeric:tabular-nums;}
+.ft-ov-value-lg{font-size:18px;font-variant-numeric:tabular-nums;}
 .ft-num{font-variant-numeric:tabular-nums;}
 .ft-suggest-item{width:100%;background:none;border:none;font:inherit;color:inherit;text-align:left;}
 .ft-root :focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px;border-radius:4px;}
@@ -889,9 +957,10 @@ window.__ModuleLoader__.load({
           onRemove
             ? h('button', { className: 'ft-idx-icon-btn', onClick: onRemove, 'aria-label': `${t('unwatch')} ${idx.name}`, title: t('unwatch') }, '✕')
             : h('button', {
-                className: `ft-idx-icon-btn${watched ? ' ft-idx-icon-on' : ''}`, disabled: watched,
+                className: `ft-idx-icon-btn${watched ? ' ft-idx-icon-on' : ''}`,
                 onClick: () => onWatch({ code: idx.code, name: idx.name }),
-                'aria-label': `${t('watch')} ${idx.name}`, title: watched ? t('inWatch') : t('watch'),
+                'aria-label': `${watched ? t('unwatch') : t('watch')} ${idx.name}`,
+                title: watched ? t('unwatch') : t('watch'),
               }, watched ? '★' : '☆'),
         ),
         h('div', { className: 'ft-idx-card-price' },
@@ -909,6 +978,13 @@ window.__ModuleLoader__.load({
       // Paginated: 2 cards per row (grid), 10 per page (5 rows, fits without scrolling).
       const size = 10;
       const [data, setData] = useState({ items: [], total: 0 });
+      // Custom drag order of index cards, persisted in localStorage. Codes that
+      // are not in the saved list (new indices) keep host order at the end.
+      const [idxOrder, setIdxOrder] = useState(loadIdxOrder);
+      const updateIdxOrder = next => {
+        setIdxOrder(next);
+        saveIdxOrder(next);
+      };
       useEffect(() => {
         let alive = true;
         fetch(`/fund-tracker/api?action=indexlist&page=${page}&size=${size}`)
@@ -920,12 +996,26 @@ window.__ModuleLoader__.load({
           .catch(e => { if (alive) setData({ items: [], total: 0, error: `fetch failed: ${e}` }); });
         return () => { alive = false; };
       }, [page, refreshKey]);
+      // Visible page sorted by the custom drag order.
+      const orderedItems = useMemo(() => {
+        const items = data.items || [];
+        if (idxOrder.length === 0) return items;
+        const rank = new Map(idxOrder.map((c, i) => [c, i]));
+        return [...items].sort((a, b) => (rank.has(a.code) ? rank.get(a.code) : idxOrder.length)
+          - (rank.has(b.code) ? rank.get(b.code) : idxOrder.length));
+      }, [data.items, idxOrder]);
       const [editingIdx, setEditingIdx] = useState(false);
       const [picked, setPicked] = useState(null);
       const selected = picked || idxConfig.selected || [];
+      // Every toggle saves immediately — no separate 保存 step. `picked` keeps
+      // the optimistic local state; on failure it rolls back to the host list.
       const toggle = code => {
         const base = picked || [...(idxConfig.selected || [])];
-        setPicked(base.includes(code) ? base.filter(c => c !== code) : [...base, code]);
+        const next = base.includes(code) ? base.filter(c => c !== code) : [...base, code];
+        setPicked(next);
+        Promise.resolve(onSaveSelection(next, () => {})).then(ok => {
+          if (ok === false) setPicked(null);
+        });
       };
       const byCategory = useMemo(() => {
         const groups = new Map();
@@ -957,18 +1047,21 @@ window.__ModuleLoader__.load({
             ),
           )),
           h('div', { className: 'ft-actions' },
-            h('button', { className: 'ft-btn', disabled: picked == null, onClick: () => onSaveSelection(selected, () => { setEditingIdx(false); setPicked(null); }) }, t('add')),
+            h('span', { className: 'ft-code' }, t('idxAuto')),
             !idxConfig.loggedIn && h('span', { className: 'ft-msg ft-err' }, t('lockHint')),
           ),
         ),
         data.items.length === 0
           ? h('div', { className: `ft-empty${data.error ? ' ft-err' : ''}` }, data.error || t('refreshing'))
-          : h('div', { className: 'ft-idx-grid' },
-              data.items.map(idx => h(IdxCard, {
+          : h(SortableGrid, {
+              t,
+              items: orderedItems.map(idx => ({ key: idx.code, idx })),
+              onOrderChange: next => updateIdxOrder(applyVisibleOrder(idxOrder, next)),
+              renderItem: ({ idx }) => h(IdxCard, {
                 t, idx, q: idxQuotes[idx.code],
                 watched: holdingsCodes.includes(idx.code), onWatch,
-              })),
-            ),
+              }),
+            }),
         h(Pager, { t, page, size, total: data.total, onPage: setPage }),
       );
     }
@@ -1089,12 +1182,8 @@ window.__ModuleLoader__.load({
       const t = makeT();
       const [intervalSec, setIntervalSecState] = useState(loadInterval);
       const [libInfo, setLibInfo] = useState(null);
-      const [etfCount, setEtfCount] = useState(null);
-      const [etfSyncing, setEtfSyncing] = useState(false);
       const [libUpdating, setLibUpdating] = useState(false);
       const [msg, setMsg] = useState(null);
-      const [idxConfig, setIdxConfig] = useState({ library: [], selected: [], loggedIn: true });
-      const [picked, setPicked] = useState(null);
       // 今日行情 · 基金状态显示设置（本地持久化，默认在售）。
       const [fundStatus, setFundStatusState] = useState(() => {
         try { return localStorage.getItem(FUND_STATUS_KEY) === 'all' ? 'all' : 'onsale'; } catch { return 'onsale'; }
@@ -1105,18 +1194,9 @@ window.__ModuleLoader__.load({
         try { localStorage.setItem(FUND_STATUS_KEY, next); } catch {}
         window.dispatchEvent(new CustomEvent('ft-fund-status-changed', { detail: next }));
       };
-      const selected = picked || idxConfig.selected || [];
-      const toggle = code => {
-        const base = picked || [...(idxConfig.selected || [])];
-        setPicked(base.includes(code) ? base.filter(c => c !== code) : [...base, code]);
-      };
       const load = useCallback(() => {
         fetch('/fund-tracker/api?action=libinfo').then(r => r.json())
           .then(info => { if (info && info.count != null) setLibInfo(info); }).catch(() => {});
-        fetch('/fund-tracker/api?action=etfinfo').then(r => r.json())
-          .then(info => { if (info && info.count != null) setEtfCount(info.count); }).catch(() => {});
-        fetch('/fund-tracker/api?action=indices').then(r => r.json())
-          .then(data => { if (data && Array.isArray(data.library)) setIdxConfig(data); }).catch(() => {});
       }, []);
       useEffect(load, [load]);
       useEffect(() => {
@@ -1141,29 +1221,6 @@ window.__ModuleLoader__.load({
           }
         } catch {} finally { setLibUpdating(false); }
       };
-      const saveSelection = async () => {
-        try {
-          const response = await fetch('/fund-tracker/api?action=savesettings', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ key: 'indices', value: selected }),
-          });
-          if (response.ok) {
-            setMsg({ kind: 'ok', text: t('idxSaved') });
-            setPicked(null);
-            load();
-          }
-        } catch {}
-      };
-      const byCategory = useMemo(() => {
-        const groups = new Map();
-        for (const item of idxConfig.library || []) {
-          const key = item.category || '其他';
-          if (!groups.has(key)) groups.set(key, []);
-          groups.get(key).push(item);
-        }
-        return groups;
-      }, [idxConfig.library]);
       return h('div', { className: 'ft-settings' },
         h('style', null, css),
         h('h2', { className: 'ft-set-title' }, '📈 ', t('panel')),
@@ -1205,23 +1262,6 @@ window.__ModuleLoader__.load({
           ),
           h('div', { className: 'ft-actions', style: { marginTop: 4 } },
             h('span', { className: 'ft-code' }, fundStatus === 'onsale' ? t('fundStatusOnSaleHint') : t('fundStatusAllHint')),
-          ),
-        ),
-        h('div', { className: 'ft-set-block' },
-          h('div', { className: 'ft-set-label' }, `${t('editIndices')} · ${t('panel')}`),
-          [...byCategory.entries()].map(([category, items]) => h('div', { key: category },
-            h('div', { className: 'ft-section-title' }, category),
-            h('div', { className: 'ft-idx-picks' },
-              items.map(item => h('button', {
-                key: item.code,
-                className: `ft-pick${selected.includes(item.code) ? ' ft-pick-on' : ''}`,
-                onClick: () => toggle(item.code),
-                title: `${item.name} (${item.code})`,
-              }, item.name)),
-            ),
-          )),
-          h('div', { className: 'ft-actions' },
-            h('button', { className: 'ft-btn', disabled: picked == null, onClick: saveSelection }, t('add')),
           ),
         ),
         msg && h('div', { className: `ft-msg${msg.kind === 'err' ? ' ft-err' : ''}` }, msg.text),
@@ -1320,15 +1360,18 @@ window.__ModuleLoader__.load({
         active === 'index' && h('div', { className: 'ft-section' },
           selected.length === 0
             ? h('div', { className: 'ft-empty' }, t('watchIdxEmpty'))
-            : h('div', { className: 'ft-idx-grid' },
-                selected.map(code => {
+            : h(SortableGrid, {
+                t,
+                items: selected.map(code => {
                   const meta = (idxConfig.library || []).find(x => x.code === code) || { code, name: code };
-                  return h(IdxCard, {
-                    t, idx: meta, q: idxQuotes[code], watched: true,
-                    onRemove: () => removeIdx(code),
-                  });
+                  return { key: code, idx: meta };
                 }),
-              ),
+                onOrderChange: next => onSaveSelection(next, () => {}),
+                renderItem: ({ idx }) => h(IdxCard, {
+                  t, idx, q: idxQuotes[idx.code], watched: true,
+                  onRemove: () => removeIdx(idx.code),
+                }),
+              }),
         ),
         active === 'fund' && h('div', { className: 'ft-section' },
           watchRows.length === 0
@@ -1951,10 +1994,11 @@ window.__ModuleLoader__.load({
             setMsg({ kind: 'ok', text: t('idxSaved') });
             done();
             setRefreshKey(k => k + 1);
-          } else {
-            setMsg({ kind: 'err', text: t('lockHint') });
+            return true;
           }
-        } catch {}
+          setMsg({ kind: 'err', text: t('lockHint') });
+          return false;
+        } catch { return false; }
       }, [t]);
 
       // Session + holdings come from the Host (SQLite, per DSH account).
@@ -2357,6 +2401,24 @@ window.__ModuleLoader__.load({
           setRefreshKey(k => k + 1);
         } finally { setSaving(false); }
       };
+      // Index star toggle: adds OR removes the watch flag. Removing keeps real
+      // positions intact (watch-only rows are deleted server-side semantics in
+      // removeFromWatch; here a flag flip is enough because indices have none).
+      const toggleIdxWatch = async r => {
+        const watched = holdings.some(x => x.code === r.code && x.watch);
+        setSaving(true);
+        try {
+          if (watched) {
+            await apiWatch(r.code, false);
+          } else if (holdings.some(x => x.code === r.code)) {
+            await apiWatch(r.code, true);
+          } else {
+            await apiSave({ code: r.code, name: r.name, shares: '', cost: '', watch: true });
+          }
+          setMsg({ kind: 'ok', text: `${watched ? t('unwatch') : t('watch')}: ${r.name || r.code}` });
+          setRefreshKey(k => k + 1);
+        } finally { setSaving(false); }
+      };
       const doImport = async () => {
         const parsed = parseBatch(importText);
         if (parsed.length === 0) { setMsg({ kind: 'err', text: t('batchImportFail') }); return; }
@@ -2433,7 +2495,7 @@ window.__ModuleLoader__.load({
                 t, market, idxQuotes, idxConfig, marketQuotes,
                 onSaveSelection: saveIndexSelection,
                 holdingsCodes: holdings.filter(x => x.watch).map(x => x.code),
-                onWatch: addWatch, onOpenDetail: openDetail, refreshKey,
+                onWatch: toggleIdxWatch, onOpenDetail: openDetail, refreshKey,
                 sub: marketSub, setSub: k => updateTabState({ marketActive: k }),
                 subOrder: marketOrder, onOrderChange: market => updateTabState({ market }),
               }))

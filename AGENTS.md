@@ -24,6 +24,36 @@ node -e "import('./lib/store.js').then(async m => { const db = m.openDb(); conso
 
 ## 坑
 
+- **界面字体加大（v2.6.0）**：`.ft-root` 基准 12→13px；面板 padding 10/14；标题
+  `.ft-bar-title` 15px/700；标题栏汇总 `.ft-bar-sum` 13px、数值 600；一级 Tab
+  14px（padding 7/14，active 700）；二级 Tab（ft-subtabs）13px；关闭按钮 16px；
+  资产总览 label 12px / value 14px / 总资产 18px。内容区字号不变（仍随 13px 基准）。
+- **指数星星双向切换 + 编辑器改「自选指数」（v2.6.0）**：IdxCard 的 ★/☆ 按钮不再
+  disabled，点实心★ = 取消自选（经 `toggleIdxWatch`，已持仓的仅翻 watch 标记，
+  指数无真实持仓所以安全；提示文案用 unwatch/watch）；☆ = 加入自选。
+  MarketTab 的 `onWatch` 从 `addWatch` 换成 `toggleIdxWatch`（基金表/ETF 表的
+  「＋ 加自选」仍走 addWatch，单向）。IndexSub 右上按钮文字 `editIndices` 改为
+  「自选指数 / Watch indices」，打开的是同一套分类勾选编辑器（勾选=自选，自动保存）。
+- **指数卡片自定义拖拽排序（v2.6.0）**：新增 `SortableGrid`（`SortableTabs` 的卡片网格
+  版，HTML5 drag：dragKey/overKey + 虚线高亮，样式 `ft-grid-cell/ft-grid-dragging/
+  ft-grid-dragover`），大盘指数与自选大盘指数两处网格都用它渲染。
+  - **大盘指数页**：顺序存 localStorage `fund-tracker.idx-order.v1`（纯 code 列表）。
+    分页下拖拽只对「当前页可见子集」重排，`applyVisibleOrder()` 把新相对顺序合并回
+    全量列表（不可见的码保留原位置），翻页后顺序不串页。列表外的码（新增指数）排在
+    已排序码之后。净空 localStorage 即恢复宿主默认顺序。
+  - **自选指数页**：拖拽经 `onSaveSelection(next, …)` 写服务端 `savesettings key=indices`
+    ——自选顺序随账号存库（选中集合与顺序是同一份数据），成功弹 idxSaved 提示。
+  - 自选页卡片 key 修正：此前 `h(IdxCard)` 漏传 key，现在 `items` 里带 `key: code`。
+- **编辑指数自动保存（v2.6.0）**：IndexSub 内联编辑器（截图里的 大盘/海外/红利/行业/
+  规模 勾选块）每次点选**立即** `onSaveSelection()` 保存，无「保存」按钮；
+  `picked` 是乐观本地态，保存失败（未登录 403）回滚到宿主列表。
+  编辑器底部常显提示 `idxAuto`（勾选即自动保存 / Changes save automatically，
+  两份词典同步加的 key）。`saveIndexSelection` 改为返回 true/false 供回滚判断。
+- **设置页移除「编辑指数」（v2.5.5）**：`FundSettings` 不再有指数勾选区块（连同
+  idxConfig/picked/saveSelection/byCategory 及 `action=indices`/`action=etfinfo` 拉取、
+  etfCount/etfSyncing state 一并删除，纯 −53 行）。编辑指数唯一入口回到
+  「今日行情 → 大盘指数 → 编辑指数」（IndexSub 内联编辑器）。词典 editIndices/idxSaved
+  仍被 IndexSub 使用，保留。Host 端 `etfinfo`/`syncetf` action 无人调用了但保留兼容。
 - **外观打磨（v2.5.4）**：行情 / 自选基金表第一列表头从误用的 `t('panel')`（面板名）
   改为 `t('open')`（基金）；标题栏汇总 今日盈亏用 `signedMoney` 带符号、数值加 `ft-num`
   与 title 提示；面板 / 弹窗加 `ft-in` 入场动画（`prefers-reduced-motion` 关闭），
